@@ -201,7 +201,7 @@ static int php_upnp_ctrl_point_callback_event_handler(Upnp_EventType EventType, 
             
     }
 */
-    return 0;
+	return 0;
 }
 
 static int php_upnp_device_callback_event_handler(Upnp_EventType EventType, void *Event, void *Cookie) /* {{{ */
@@ -210,7 +210,7 @@ static int php_upnp_device_callback_event_handler(Upnp_EventType EventType, void
             
     }
 */
-    return 0;
+	return 0;
 }
 
 /* {{{ PHP_MINIT_FUNCTION
@@ -274,26 +274,26 @@ PHP_FUNCTION(upnp_error)
 PHP_FUNCTION(upnp_get_server_port) 
 {
 	unsigned short port;
-    
-    if (ZEND_NUM_ARGS() != 0) {
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "") == FAILURE) {
 		return;
 	}
 
-    if (!php_upnp_initialized) {
+	if (!php_upnp_initialized) {
 		RETURN_FALSE;
 	}
 	
-    port = UpnpGetServerPort();
-    RETURN_LONG(port);
+	port = UpnpGetServerPort();
+	RETURN_LONG(port);
 }
 /* }}} */
 
 /* {{{ */
 PHP_FUNCTION(upnp_get_server_ip_address) 
 {
-    char *ip = NULL;
-    
-    if (ZEND_NUM_ARGS() != 0) {
+	char *ip = NULL;
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "") == FAILURE) {
 		return;
 	}
 	
@@ -303,16 +303,16 @@ PHP_FUNCTION(upnp_get_server_ip_address)
 
 	ip = UpnpGetServerIpAddress();
 	if (ip) {
-		RETURN_STRING(ip, 0);
+		RETURN_STRING(ip, 1);
 	}
-    RETURN_FALSE;
+	RETURN_FALSE;
 }
 /* }}} */
 
 /* {{{ */
 PHP_FUNCTION(upnp_register_client)
 {
-	if (ZEND_NUM_ARGS() != 0) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "") == FAILURE) {
 		return;
 	}
 
@@ -321,12 +321,12 @@ PHP_FUNCTION(upnp_register_client)
 	}
 	
 	php_upnp_error_code = UpnpRegisterClient(php_upnp_ctrl_point_callback_event_handler,
-                            &php_upnp_ctrlpt_handle, &php_upnp_ctrlpt_handle);
-    if (php_upnp_error_code != UPNP_E_SUCCESS) {
+							&php_upnp_ctrlpt_handle, &php_upnp_ctrlpt_handle);
+	if (php_upnp_error_code != UPNP_E_SUCCESS) {
 		php_error_docref(NULL TSRMLS_CC, E_WARNING, "Error registering control point: %d", php_upnp_error_code);
-        UpnpFinish();
+		UpnpFinish();
 		RETURN_FALSE;
-    }
+	}
 
 	RETURN_TRUE;
 }
@@ -335,7 +335,7 @@ PHP_FUNCTION(upnp_register_client)
 /* {{{ */
 PHP_FUNCTION(upnp_unregister_client)
 {
-	if (ZEND_NUM_ARGS() != 0) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "") == FAILURE) {
 		return;
 	}
 
@@ -355,7 +355,7 @@ PHP_FUNCTION(upnp_unregister_client)
 /* {{{ */
 PHP_FUNCTION(upnp_set_max_content_length)
 {
-	size_t length;
+	long length;
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "l", &length) == FAILURE) {
 		return;
@@ -404,12 +404,12 @@ PHP_FUNCTION(upnp_register_root_device)
 	}
 
 	php_upnp_error_code = UpnpRegisterRootDevice(desc_url, php_upnp_device_callback_event_handler,
-                            &php_upnp_device_handle, &php_upnp_device_handle);
-    if (php_upnp_error_code != UPNP_E_SUCCESS) {
+							&php_upnp_device_handle, &php_upnp_device_handle);
+	if (php_upnp_error_code != UPNP_E_SUCCESS) {
 		php_error_docref(NULL TSRMLS_CC, E_WARNING, "Error registering the rootdevice: %d", php_upnp_error_code);
-        UpnpFinish();
+		UpnpFinish();
 		RETURN_FALSE;
-    }
+	}
 
 	RETURN_TRUE;
 }
@@ -418,7 +418,7 @@ PHP_FUNCTION(upnp_register_root_device)
 /* {{{ */
 PHP_FUNCTION(upnp_unregister_root_device)
 {
-	if (ZEND_NUM_ARGS() != 0) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "") == FAILURE) {
 		return;
 	}
 
@@ -442,8 +442,8 @@ PHP_FUNCTION(upnp_unregister_root_device)
 const zend_function_entry upnp_functions[] = {
 	PHP_FE(upnp_errcode, NULL)
 	PHP_FE(upnp_error, NULL)
-    PHP_FE(upnp_get_server_port, NULL)
-    PHP_FE(upnp_get_server_ip_address, NULL)
+	PHP_FE(upnp_get_server_port, NULL)
+	PHP_FE(upnp_get_server_ip_address, NULL)
 	PHP_FE(upnp_register_client, NULL)
 	PHP_FE(upnp_unregister_client, NULL)
 	PHP_FE(upnp_set_max_content_length, NULL)
