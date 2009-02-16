@@ -350,7 +350,7 @@ PHP_FUNCTION(upnp_register_client)
 	}
 
 	if (!zend_is_callable(zcallback, 0, &callback_name)) {
-		php_error_docref1(NULL TSRMLS_CC, callback_name, E_WARNING, "'%s' is not a valid callback", callback_name);
+		php_error_docref(NULL TSRMLS_CC, E_WARNING, "'%s' is not a valid callback", callback_name);
 		efree(callback_name);
 		RETURN_FALSE;
 	}
