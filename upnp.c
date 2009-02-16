@@ -37,6 +37,11 @@ static int php_upnp_error_code = 0;
 static UpnpClient_Handle php_upnp_ctrlpt_handle = -1;
 static UpnpDevice_Handle php_upnp_device_handle = -1;
 
+typedef struct _php_upnp_callback_struct {
+    zval *callback;
+    zval *arg;
+} php_upnp_callback_struct;
+
 
 #ifdef COMPILE_DL_UPNP
 ZEND_GET_MODULE(upnp)
@@ -197,12 +202,31 @@ static int php_upnp_terminate(void) /* {{{ */
 
 static int php_upnp_ctrl_point_callback_event_handler(Upnp_EventType EventType, void *Event, void *Cookie) /* {{{ */
 {
-/*    switch ( EventType ) {
-            
-    }
-*/
+	zval *args[2];
+	zval retval;
+	php_upnp_callback_struct *cb = (php_upnp_callback_struct *)Cookie;
+
+	args[0] = cb->arg;
+
+	MAKE_STD_ZVAL(args[1]);
+	ZVAL_LONG(args[1], EventType); 
+
+	if (call_user_function(EG(function_table), NULL, cb->callback, &retval, 2, args TSRMLS_CC) == SUCCESS) {
+		/* release any returned zval */
+		zval_dtor(&retval);
+	}
+	
+	zval_ptr_dtor(&(args[0]));
+	zval_ptr_dtor(&(args[1])); 
+
+	/* and clean up the structure */
+	zval_dtor(cb->callback);
+	zval_dtor(cb->arg);
+	efree(cb);
+
 	return 0;
 }
+/* }}} */
 
 static int php_upnp_device_callback_event_handler(Upnp_EventType EventType, void *Event, void *Cookie) /* {{{ */
 {
@@ -212,6 +236,7 @@ static int php_upnp_device_callback_event_handler(Upnp_EventType EventType, void
 */
 	return 0;
 }
+/* }}} */
 
 /* {{{ PHP_MINIT_FUNCTION
  */
@@ -312,16 +337,38 @@ PHP_FUNCTION(upnp_get_server_ip_address)
 /* {{{ */
 PHP_FUNCTION(upnp_register_client)
 {
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "") == FAILURE) {
-		return;
-	}
+	zval *zcallback, *zarg;
+	char *callback_name;
+	php_upnp_callback_struct *cb;
 
 	if (!php_upnp_initialized) {
 		RETURN_FALSE;
 	}
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "zz", &zcallback, &zarg) == FAILURE) {
+		return;
+	}
+
+	if (!zend_is_callable(zcallback, 0, &callback_name)) {
+		php_error_docref1(NULL TSRMLS_CC, callback_name, E_WARNING, "'%s' is not a valid callback", callback_name);
+		efree(callback_name);
+		RETURN_FALSE;
+	}
+	efree(callback_name); 
+
+	zval_add_ref(&zcallback);
+	if (zarg) {
+		zval_add_ref(&zarg);
+	} else {
+		ALLOC_INIT_ZVAL(zarg);
+	}
+
+	cb = emalloc(sizeof(php_upnp_callback_struct));
+	cb->callback = zcallback;
+	cb->arg = zarg; 
 	
 	php_upnp_error_code = UpnpRegisterClient(php_upnp_ctrl_point_callback_event_handler,
-							&php_upnp_ctrlpt_handle, &php_upnp_ctrlpt_handle);
+							cb, &php_upnp_ctrlpt_handle);
 	if (php_upnp_error_code != UPNP_E_SUCCESS) {
 		php_error_docref(NULL TSRMLS_CC, E_WARNING, "Error registering control point: %d", php_upnp_error_code);
 		UpnpFinish();
@@ -434,7 +481,6 @@ PHP_FUNCTION(upnp_unregister_root_device)
 	RETURN_TRUE;
 }
 /* }}} */
-
 
 
 /* {{{ upnp_functions[]
