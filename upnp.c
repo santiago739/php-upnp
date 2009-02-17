@@ -352,6 +352,10 @@ PHP_FUNCTION(upnp_register_client)
 	if (!php_upnp_initialized) {
 		RETURN_FALSE;
 	}
+	
+	if ((php_upnp_ctrlpt_handle != -1) || (php_upnp_device_handle != -1)) {
+		RETURN_FALSE;
+	}
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "zz", &zcallback, &zarg) == FAILURE) {
 		return;
@@ -404,6 +408,10 @@ PHP_FUNCTION(upnp_unregister_client)
 	if (php_upnp_error_code != UPNP_E_SUCCESS) {
 		RETURN_FALSE;
 	}
+	
+	php_upnp_ctrlpt_handle = -1; 
+	php_upnp_device_handle = -1;
+	
 	RETURN_TRUE;
 }
 /* }}} */
@@ -414,9 +422,12 @@ PHP_FUNCTION(upnp_register_root_device)
 	zval *zcallback, *zarg;
 	char *callback_name, *desc_url;
 	int desc_url_len;
-	php_upnp_callback_struct *cb;
 	
 	if (!php_upnp_initialized) {
+		RETURN_FALSE;
+	}
+	
+	if ((php_upnp_ctrlpt_handle != -1) || (php_upnp_device_handle != -1)) {
 		RETURN_FALSE;
 	}
 	
@@ -438,13 +449,13 @@ PHP_FUNCTION(upnp_register_root_device)
 	} else {
 		ALLOC_INIT_ZVAL(zarg);
 	}
-
-	cb = emalloc(sizeof(php_upnp_callback_struct));
-	cb->callback = zcallback;
-	cb->arg = zarg; 
+	
+	php_upnp_callback = emalloc(sizeof(php_upnp_callback_struct));
+	php_upnp_callback->callback = zcallback;
+	php_upnp_callback->arg = zarg; 
 
 	php_upnp_error_code = UpnpRegisterRootDevice(desc_url, php_upnp_callback_event_handler,
-							cb, &php_upnp_device_handle);
+							php_upnp_callback, &php_upnp_device_handle);
 	if (php_upnp_error_code != UPNP_E_SUCCESS) {
 		php_error_docref(NULL TSRMLS_CC, E_WARNING, "Error registering the rootdevice: %d", php_upnp_error_code);
 		UpnpFinish();
@@ -471,6 +482,10 @@ PHP_FUNCTION(upnp_unregister_root_device)
 	if (php_upnp_error_code != UPNP_E_SUCCESS) {
 		RETURN_FALSE;
 	}
+	
+	php_upnp_ctrlpt_handle = -1; 
+	php_upnp_device_handle = -1;
+	
 	RETURN_TRUE;
 }
 /* }}} */
