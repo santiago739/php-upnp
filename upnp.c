@@ -31,16 +31,18 @@
 
 ZEND_DECLARE_MODULE_GLOBALS(upnp)
 
+typedef struct _php_upnp_callback_struct { /* {{{ */
+    zval *callback;
+    zval *arg;
+} php_upnp_callback_struct;
+/* }}} */
+
 static int le_upnp;
 static int php_upnp_initialized = 0;
 static int php_upnp_error_code = 0;
 static UpnpClient_Handle php_upnp_ctrlpt_handle = -1;
 static UpnpDevice_Handle php_upnp_device_handle = -1;
-
-typedef struct _php_upnp_callback_struct {
-    zval *callback;
-    zval *arg;
-} php_upnp_callback_struct;
+static php_upnp_callback_struct *php_upnp_callback;
 
 
 #ifdef COMPILE_DL_UPNP
@@ -200,7 +202,7 @@ static int php_upnp_terminate(void) /* {{{ */
 }
 /* }}} */
 
-static int php_upnp_ctrl_point_callback_event_handler(Upnp_EventType EventType, void *Event, void *Cookie) /* {{{ */
+static int php_upnp_callback_event_handler(Upnp_EventType EventType, void *Event, void *Cookie) /* {{{ */
 {
 	zval *args[2];
 	zval retval;
@@ -212,19 +214,25 @@ static int php_upnp_ctrl_point_callback_event_handler(Upnp_EventType EventType, 
 	ZVAL_LONG(args[1], EventType); 
 
 	if (call_user_function(EG(function_table), NULL, cb->callback, &retval, 2, args TSRMLS_CC) == SUCCESS) {
-		/* release any returned zval */
 		zval_dtor(&retval);
 	}
-	
+
 	zval_ptr_dtor(&(args[0]));
 	zval_ptr_dtor(&(args[1])); 
-
-	/* and clean up the structure */
-	zval_dtor(cb->callback);
-	zval_dtor(cb->arg);
-	efree(cb);
-
+	
 	return 0;
+}
+/* }}} */
+
+static void php_upnp_callback_event_free(void) /* {{{ */
+{
+	if (!php_upnp_callback)
+	{
+		return;
+	}
+	zval_dtor(php_upnp_callback->callback);
+	zval_dtor(php_upnp_callback->arg);
+	efree(php_upnp_callback);
 }
 /* }}} */
 
@@ -260,6 +268,7 @@ PHP_MSHUTDOWN_FUNCTION(upnp)
 	/* shut it down if initialized */
 	if (UPNP_G(enabled)) {
 		php_upnp_terminate();
+		php_upnp_callback_event_free();
 	}
 
 	UNREGISTER_INI_ENTRIES();
@@ -339,7 +348,6 @@ PHP_FUNCTION(upnp_register_client)
 {
 	zval *zcallback, *zarg;
 	char *callback_name;
-	php_upnp_callback_struct *cb;
 
 	if (!php_upnp_initialized) {
 		RETURN_FALSE;
@@ -363,12 +371,13 @@ PHP_FUNCTION(upnp_register_client)
 		ALLOC_INIT_ZVAL(zarg);
 	}
 
-	cb = emalloc(sizeof(php_upnp_callback_struct));
-	cb->callback = zcallback;
-	cb->arg = zarg; 
+	php_upnp_callback = emalloc(sizeof(php_upnp_callback_struct));
+	php_upnp_callback->callback = zcallback;
+	php_upnp_callback->arg = zarg; 
 	
-	php_upnp_error_code = UpnpRegisterClient(php_upnp_ctrl_point_callback_event_handler,
-							cb, &php_upnp_ctrlpt_handle);
+	php_upnp_error_code = UpnpRegisterClient(php_upnp_callback_event_handler,
+							php_upnp_callback, &php_upnp_ctrlpt_handle);
+	
 	if (php_upnp_error_code != UPNP_E_SUCCESS) {
 		php_error_docref(NULL TSRMLS_CC, E_WARNING, "Error registering control point: %d", php_upnp_error_code);
 		UpnpFinish();
@@ -400,58 +409,42 @@ PHP_FUNCTION(upnp_unregister_client)
 /* }}} */
 
 /* {{{ */
-PHP_FUNCTION(upnp_set_max_content_length)
-{
-	long length;
-
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "l", &length) == FAILURE) {
-		return;
-	}
-
-	php_upnp_error_code = UpnpSetMaxContentLength(length);
-	
-	if (php_upnp_error_code != UPNP_E_SUCCESS) {
-		RETURN_FALSE;
-	}
-	RETURN_TRUE;
-}
-/* }}} */
-
-/* {{{ */
-PHP_FUNCTION(upnp_set_webserver_rootdir)
-{
-	char* root_dir;
-	int root_dir_len;
-
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &root_dir, &root_dir_len) == FAILURE) {
-		return;
-	}
-
-	php_upnp_error_code = UpnpSetWebServerRootDir(root_dir);
-	
-	if (php_upnp_error_code != UPNP_E_SUCCESS) {
-		RETURN_FALSE;
-	}
-	RETURN_TRUE;
-}
-/* }}} */
-
-/* {{{ */
 PHP_FUNCTION(upnp_register_root_device)
 {
-	char* desc_url;
+	zval *zcallback, *zarg;
+	char *callback_name, *desc_url;
 	int desc_url_len;
-
+	php_upnp_callback_struct *cb;
+	
 	if (!php_upnp_initialized) {
 		RETURN_FALSE;
 	}
 	
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &desc_url, &desc_url_len) == FAILURE) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "szz", &desc_url, &desc_url_len, &zcallback, &zarg) == FAILURE) {
 		return;
 	}
+	
+	if (!zend_is_callable(zcallback, 0, &callback_name)) {
+		php_error_docref(NULL TSRMLS_CC, E_WARNING, "'%s' is not a valid callback", callback_name);
+		efree(callback_name);
+		efree(desc_url);
+		RETURN_FALSE;
+	}
+	efree(callback_name); 
 
-	php_upnp_error_code = UpnpRegisterRootDevice(desc_url, php_upnp_device_callback_event_handler,
-							&php_upnp_device_handle, &php_upnp_device_handle);
+	zval_add_ref(&zcallback);
+	if (zarg) {
+		zval_add_ref(&zarg);
+	} else {
+		ALLOC_INIT_ZVAL(zarg);
+	}
+
+	cb = emalloc(sizeof(php_upnp_callback_struct));
+	cb->callback = zcallback;
+	cb->arg = zarg; 
+
+	php_upnp_error_code = UpnpRegisterRootDevice(desc_url, php_upnp_callback_event_handler,
+							cb, &php_upnp_device_handle);
 	if (php_upnp_error_code != UPNP_E_SUCCESS) {
 		php_error_docref(NULL TSRMLS_CC, E_WARNING, "Error registering the rootdevice: %d", php_upnp_error_code);
 		UpnpFinish();
@@ -482,6 +475,76 @@ PHP_FUNCTION(upnp_unregister_root_device)
 }
 /* }}} */
 
+/* {{{ */
+PHP_FUNCTION(upnp_set_max_content_length)
+{
+	long length;
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "l", &length) == FAILURE) {
+		return;
+	}
+
+	php_upnp_error_code = UpnpSetMaxContentLength(length);
+	
+	if (php_upnp_error_code != UPNP_E_SUCCESS) {
+		RETURN_FALSE;
+	}
+	RETURN_TRUE;
+}
+/* }}} */
+
+/* {{{ */
+PHP_FUNCTION(upnp_set_webserver_rootdir)
+{
+	char *root_dir;
+	int root_dir_len;
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &root_dir, &root_dir_len) == FAILURE) {
+		return;
+	}
+
+	php_upnp_error_code = UpnpSetWebServerRootDir(root_dir);
+	
+	if (php_upnp_error_code != UPNP_E_SUCCESS) {
+		RETURN_FALSE;
+	}
+	RETURN_TRUE;
+}
+/* }}} */
+
+/* {{{ */
+PHP_FUNCTION(upnp_search_async)
+{
+	char *target = NULL;
+	int time_mx=5, target_len;
+	zval *zarg;
+	php_upnp_callback_struct *cb = NULL;
+	
+	if (!php_upnp_initialized) {
+		RETURN_FALSE;
+	}
+	
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "lsz", &time_mx, &target, &target_len, &zarg) == FAILURE) {
+  		return;
+  	}
+	
+	if (zarg) {
+		zval_add_ref(&zarg);
+	} else {
+		ALLOC_INIT_ZVAL(zarg);
+	}
+	
+	cb = emalloc(sizeof(php_upnp_callback_struct));
+	cb->callback = php_upnp_callback->callback;
+	cb->arg = zarg; 
+	
+	php_upnp_error_code = UpnpSearchAsync(php_upnp_ctrlpt_handle, time_mx, target, cb);
+	
+	RETURN_TRUE;
+}
+/* }}} */
+
 
 /* {{{ upnp_functions[]
  */
@@ -492,10 +555,11 @@ const zend_function_entry upnp_functions[] = {
 	PHP_FE(upnp_get_server_ip_address, NULL)
 	PHP_FE(upnp_register_client, NULL)
 	PHP_FE(upnp_unregister_client, NULL)
-	PHP_FE(upnp_set_max_content_length, NULL)
-	PHP_FE(upnp_set_webserver_rootdir, NULL)
 	PHP_FE(upnp_register_root_device, NULL)
 	PHP_FE(upnp_unregister_root_device, NULL)
+	PHP_FE(upnp_set_max_content_length, NULL)
+	PHP_FE(upnp_set_webserver_rootdir, NULL)
+	PHP_FE(upnp_search_async, NULL)
 	{NULL, NULL, NULL}
 };
 /* }}} */
