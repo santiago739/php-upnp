@@ -236,16 +236,6 @@ static void php_upnp_callback_event_free(void) /* {{{ */
 }
 /* }}} */
 
-static int php_upnp_device_callback_event_handler(Upnp_EventType EventType, void *Event, void *Cookie) /* {{{ */
-{
-/*    switch ( EventType ) {
-            
-    }
-*/
-	return 0;
-}
-/* }}} */
-
 /* {{{ PHP_MINIT_FUNCTION
  */
 PHP_MINIT_FUNCTION(upnp)
@@ -384,7 +374,6 @@ PHP_FUNCTION(upnp_register_client)
 	
 	if (php_upnp_error_code != UPNP_E_SUCCESS) {
 		php_error_docref(NULL TSRMLS_CC, E_WARNING, "Error registering control point: %d", php_upnp_error_code);
-		UpnpFinish();
 		RETURN_FALSE;
 	}
 
@@ -402,6 +391,10 @@ PHP_FUNCTION(upnp_unregister_client)
 	if (!php_upnp_initialized) {
 		RETURN_FALSE;
 	}
+	
+	if (php_upnp_ctrlpt_handle == -1) {
+		RETURN_FALSE;
+	}
 
 	php_upnp_error_code = UpnpUnRegisterClient(php_upnp_ctrlpt_handle);
 
@@ -410,7 +403,6 @@ PHP_FUNCTION(upnp_unregister_client)
 	}
 	
 	php_upnp_ctrlpt_handle = -1; 
-	php_upnp_device_handle = -1;
 	
 	RETURN_TRUE;
 }
@@ -438,7 +430,7 @@ PHP_FUNCTION(upnp_register_root_device)
 	if (!zend_is_callable(zcallback, 0, &callback_name)) {
 		php_error_docref(NULL TSRMLS_CC, E_WARNING, "'%s' is not a valid callback", callback_name);
 		efree(callback_name);
-		efree(desc_url);
+		//efree(desc_url);
 		RETURN_FALSE;
 	}
 	efree(callback_name); 
@@ -458,7 +450,79 @@ PHP_FUNCTION(upnp_register_root_device)
 							php_upnp_callback, &php_upnp_device_handle);
 	if (php_upnp_error_code != UPNP_E_SUCCESS) {
 		php_error_docref(NULL TSRMLS_CC, E_WARNING, "Error registering the rootdevice: %d", php_upnp_error_code);
-		UpnpFinish();
+		RETURN_FALSE;
+	}
+
+	RETURN_TRUE;
+}
+/* }}} */
+
+/* {{{ */
+PHP_FUNCTION(upnp_register_root_device_ext)
+{
+	zval *zcallback, *zarg;
+	char *callback_name, *desc;
+	int desc_len, config_base_url;
+	long desc_type, buffer_len = 0;
+	Upnp_DescType upnp_desc_type;
+	
+	if (!php_upnp_initialized) {
+		RETURN_FALSE;
+	}
+	
+	if ((php_upnp_ctrlpt_handle != -1) || (php_upnp_device_handle != -1)) {
+		RETURN_FALSE;
+	}
+	
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "szz|l", &desc, &desc_len, &zcallback, &zarg, &desc_type) == FAILURE) {
+		return;
+	}
+	
+	if (!zend_is_callable(zcallback, 0, &callback_name)) {
+		php_error_docref(NULL TSRMLS_CC, E_WARNING, "'%s' is not a valid callback", callback_name);
+		efree(callback_name);
+		RETURN_FALSE;
+	}
+	efree(callback_name); 
+
+	zval_add_ref(&zcallback);
+	if (zarg) {
+		zval_add_ref(&zarg);
+	} else {
+		ALLOC_INIT_ZVAL(zarg);
+	}
+	
+	php_upnp_callback = emalloc(sizeof(php_upnp_callback_struct));
+	php_upnp_callback->callback = zcallback;
+	php_upnp_callback->arg = zarg; 
+	
+	switch (desc_type) {
+		case 1:
+			upnp_desc_type = UPNPREG_URL_DESC;
+			config_base_url = 0;
+			break;
+		case 2:
+			upnp_desc_type = UPNPREG_FILENAME_DESC;
+			config_base_url = 1;
+			break;
+		case 3:
+			upnp_desc_type = UPNPREG_BUF_DESC;
+			buffer_len = desc_len;
+			config_base_url = 1;
+			break;
+		default:
+			upnp_desc_type = UPNPREG_URL_DESC;
+			config_base_url = 0;
+	}
+
+	php_upnp_error_code = UpnpRegisterRootDevice2(upnp_desc_type, desc, 
+							buffer_len, config_base_url, 
+							php_upnp_callback_event_handler,
+							php_upnp_callback, &php_upnp_device_handle);
+	
+	if (php_upnp_error_code != UPNP_E_SUCCESS) {
+		php_error_docref(NULL TSRMLS_CC, E_WARNING, "Error registering the rootdevice: %s (error code: %d)", 
+						 php_upnp_err2str(php_upnp_error_code), php_upnp_error_code);
 		RETURN_FALSE;
 	}
 
@@ -476,6 +540,10 @@ PHP_FUNCTION(upnp_unregister_root_device)
 	if (!php_upnp_initialized) {
 		RETURN_FALSE;
 	}
+	
+	if (php_upnp_device_handle == -1) {
+		RETURN_FALSE;
+	}
 
 	php_upnp_error_code = UpnpUnRegisterRootDevice(php_upnp_device_handle);
 
@@ -483,7 +551,6 @@ PHP_FUNCTION(upnp_unregister_root_device)
 		RETURN_FALSE;
 	}
 	
-	php_upnp_ctrlpt_handle = -1; 
 	php_upnp_device_handle = -1;
 	
 	RETURN_TRUE;
@@ -560,6 +627,24 @@ PHP_FUNCTION(upnp_search_async)
 }
 /* }}} */
 
+/* {{{ */
+PHP_FUNCTION(upnp_send_advertisement)
+{
+	long exp;
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "l", &exp) == FAILURE) {
+		return;
+	}
+
+	php_upnp_error_code = UpnpSendAdvertisement(php_upnp_device_handle, exp);
+	
+	if (php_upnp_error_code != UPNP_E_SUCCESS) {
+		RETURN_FALSE;
+	}
+	RETURN_TRUE;
+}
+/* }}} */
+
 
 /* {{{ upnp_functions[]
  */
@@ -571,10 +656,12 @@ const zend_function_entry upnp_functions[] = {
 	PHP_FE(upnp_register_client, NULL)
 	PHP_FE(upnp_unregister_client, NULL)
 	PHP_FE(upnp_register_root_device, NULL)
+	PHP_FE(upnp_register_root_device_ext, NULL)	
 	PHP_FE(upnp_unregister_root_device, NULL)
 	PHP_FE(upnp_set_max_content_length, NULL)
 	PHP_FE(upnp_set_webserver_rootdir, NULL)
 	PHP_FE(upnp_search_async, NULL)
+	PHP_FE(upnp_send_advertisement, NULL)
 	{NULL, NULL, NULL}
 };
 /* }}} */
