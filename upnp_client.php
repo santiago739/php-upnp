@@ -1,13 +1,15 @@
 <?php
 $br = (php_sapi_name() == "cli")? "\n":"<br>";
 
+$callback = 'ctrl_point_callback_event_handler';
+$TvDeviceType = "urn:schemas-upnp-org:device:tvdevice:1";
+
 function ctrl_point_callback_event_handler($args, $event_type, $event)
-//function ctrl_point_callback_event_handler($args, $event_type)
 {
 	global $br;
 	
 	echo "=========================================================$br";
-	echo "ctrl_point_callback_event_handler() is called $br";
+	echo "[CALL]: ctrl_point_callback_event_handler() $br";
 	echo "---------------------------------------------------------$br";
 
 	echo "args: ";
@@ -26,29 +28,32 @@ function ctrl_point_callback_event_handler($args, $event_type, $event)
 	echo $br.$br;
 }
 
+function show_error()
+{
+	global $br;
+	echo '[ERROR]: ' . upnp_error() . $br;
+}
+
 /* ########################################################### */
-echo "check: upnp_register_client() $br";
-$callback = 'ctrl_point_callback_event_handler';
+echo "[CALL]: upnp_register_client() $br";
 $args = array('register_client');
-var_dump(upnp_register_client($callback, $args));
-
-//echo "Start sleep $br";
-//sleep(10);
-//echo "Stop sleep $br";
+$res = upnp_register_client($callback, $args);
+echo "[RESULT]: ";
+var_dump($res);
+if (!$res)
+{
+	show_error();
+	die('Failed to register client');
+}
 /* ########################################################### */
 
 
 /* ########################################################### */
-echo "check: upnp_search_async() $br";
-$callback = 'ctrl_point_callback_event_handler';
+//echo "check: upnp_search_async() $br";
 $args = array('search_async');
-$TvDeviceType = "urn:schemas-upnp-org:device:tvdevice:1";
 
-$rc = upnp_search_async(5, $TvDeviceType, $callback, $args);
-var_dump($rc);
-//echo "Start sleep $br";
-//sleep(10);
-//echo "Stop sleep $br";
+//$rc = upnp_search_async(5, $TvDeviceType, $callback, $args);
+//var_dump($rc);
 /* ########################################################### */
 
 while(1)
@@ -63,5 +68,5 @@ var_dump(upnp_unregister_client());
 
 
 
-var_dump(upnp_error());
+var_dump();
 ?>

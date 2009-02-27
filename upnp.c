@@ -269,7 +269,38 @@ static int php_upnp_callback_event_handler(Upnp_EventType EventType, void *Event
 	ZVAL_STRING(args[1], estrdup(php_upnp_get_event_type_name(EventType)), 0);
 	
 	MAKE_STD_ZVAL(args[2]);
-	ZVAL_STRING(args[2], estrdup("Upnp_Event would be here!"), 0);
+	//ZVAL_STRING(args[2], estrdup("Upnp_Event would be here!"), 0);
+	switch ( EventType ) {
+		case UPNP_DISCOVERY_ADVERTISEMENT_ALIVE:
+		case UPNP_DISCOVERY_ADVERTISEMENT_BYEBYE:
+		case UPNP_DISCOVERY_SEARCH_RESULT:
+		{
+			struct Upnp_Discovery *d_event = (struct Upnp_Discovery *)Event;
+			
+			ZVAL_STRING(args[2], estrdup(d_event->Location), 0);
+/*			
+			SampleUtil_Print( "ErrCode     =  %d\n",
+							  d_event->ErrCode );
+			SampleUtil_Print( "Expires     =  %d\n",
+							  d_event->Expires );
+			SampleUtil_Print( "DeviceId    =  %s\n",
+							  d_event->DeviceId );
+			SampleUtil_Print( "DeviceType  =  %s\n",
+							  d_event->DeviceType );
+			SampleUtil_Print( "ServiceType =  %s\n",
+							  d_event->ServiceType );
+			SampleUtil_Print( "ServiceVer  =  %s\n",
+							  d_event->ServiceVer );
+			SampleUtil_Print( "Location    =  %s\n",
+							  d_event->Location );
+			SampleUtil_Print( "OS          =  %s\n", d_event->Os );
+			SampleUtil_Print( "Ext         =  %s\n", d_event->Ext );
+*/			
+
+		}
+		break;
+	}
+
 
 	if (call_user_function(EG(function_table), NULL, callback->func, &retval, 3, args TSRMLS_CC) == SUCCESS) {
 		zval_dtor(&retval);
