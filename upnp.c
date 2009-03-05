@@ -43,6 +43,8 @@ static int php_upnp_error_code = 0;
 static UpnpClient_Handle php_upnp_ctrlpt_handle = -1;
 static UpnpDevice_Handle php_upnp_device_handle = -1;
 
+static int php_upnp_callback_mutex = 1;
+
 
 #ifdef COMPILE_DL_UPNP
 ZEND_GET_MODULE(upnp)
@@ -216,7 +218,7 @@ static int php_upnp_terminate(void) /* {{{ */
 }
 /* }}} */
 
-static const char *php_upnp_get_event_type_name(Upnp_EventType EventType)
+static const char *php_upnp_get_event_type_name(Upnp_EventType EventType) /* {{{ */
 {
 	switch (EventType) {
 		case UPNP_DISCOVERY_ADVERTISEMENT_ALIVE:
@@ -249,8 +251,11 @@ static const char *php_upnp_get_event_type_name(Upnp_EventType EventType)
 			return "UPNP_EVENT_AUTORENEWAL_FAILED";
 		case UPNP_EVENT_SUBSCRIPTION_EXPIRED:
 			return "UPNP_EVENT_SUBSCRIPTION_EXPIRED";
+		default:
+			return "unknown event type";
     }
 }
+/* }}} */
 
 static int php_upnp_callback_event_handler(Upnp_EventType EventType, void *Event, void *Cookie) /* {{{ */
 {
@@ -258,18 +263,20 @@ static int php_upnp_callback_event_handler(Upnp_EventType EventType, void *Event
 	zval retval;
 	php_upnp_callback_struct *callback = (php_upnp_callback_struct *)Cookie;
 	
-	if (!callback) {
-		return;
+	if (!callback || (php_upnp_callback_mutex == 0)) {
+		return 1;
 	}
 	
+	php_upnp_callback_mutex = 0;
+		
 	args[0] = callback->arg;
 	args[0]->refcount++;
 	
 	MAKE_STD_ZVAL(args[1]);
-	ZVAL_STRING(args[1], estrdup(php_upnp_get_event_type_name(EventType)), 0);
+	ZVAL_STRING(args[1], estrdup(php_upnp_get_event_type_name(EventType)), 1);
 	
 	MAKE_STD_ZVAL(args[2]);
-	//ZVAL_STRING(args[2], estrdup("Upnp_Event would be here!"), 0);
+	
 	switch ( EventType ) {
 		case UPNP_DISCOVERY_ADVERTISEMENT_ALIVE:
 		case UPNP_DISCOVERY_ADVERTISEMENT_BYEBYE:
@@ -277,29 +284,15 @@ static int php_upnp_callback_event_handler(Upnp_EventType EventType, void *Event
 		{
 			struct Upnp_Discovery *d_event = (struct Upnp_Discovery *)Event;
 			
-			ZVAL_STRING(args[2], estrdup(d_event->Location), 0);
-/*			
-			SampleUtil_Print( "ErrCode     =  %d\n",
-							  d_event->ErrCode );
-			SampleUtil_Print( "Expires     =  %d\n",
-							  d_event->Expires );
-			SampleUtil_Print( "DeviceId    =  %s\n",
-							  d_event->DeviceId );
-			SampleUtil_Print( "DeviceType  =  %s\n",
-							  d_event->DeviceType );
-			SampleUtil_Print( "ServiceType =  %s\n",
-							  d_event->ServiceType );
-			SampleUtil_Print( "ServiceVer  =  %s\n",
-							  d_event->ServiceVer );
-			SampleUtil_Print( "Location    =  %s\n",
-							  d_event->Location );
-			SampleUtil_Print( "OS          =  %s\n", d_event->Os );
-			SampleUtil_Print( "Ext         =  %s\n", d_event->Ext );
-*/			
-
+			ZVAL_STRING(args[2], estrdup(d_event->Location), 1);
 		}
 		break;
+			
+		default:
+			ZVAL_STRING(args[2], estrdup("other EventType recieved"), 0);
+		break;
 	}
+	
 
 
 	if (call_user_function(EG(function_table), NULL, callback->func, &retval, 3, args TSRMLS_CC) == SUCCESS) {
@@ -309,6 +302,8 @@ static int php_upnp_callback_event_handler(Upnp_EventType EventType, void *Event
 	zval_ptr_dtor(&(args[0]));
 	zval_ptr_dtor(&(args[1])); 
 	zval_ptr_dtor(&(args[2])); 
+		
+	php_upnp_callback_mutex = 1;
 	
 	return 0;
 }
@@ -734,6 +729,10 @@ PHP_FUNCTION(upnp_search_async)
 PHP_FUNCTION(upnp_send_advertisement)
 {
 	long exp;
+	
+	if (php_upnp_device_handle == -1) {
+		RETURN_FALSE;
+	}
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "l", &exp) == FAILURE) {
 		return;
@@ -748,6 +747,54 @@ PHP_FUNCTION(upnp_send_advertisement)
 }
 /* }}} */
 
+/* {{{ */
+PHP_FUNCTION(upnp_subscribe)
+{
+	char *url;
+	int url_len, time_out;
+	Upnp_SID subs_id;
+	
+	if (php_upnp_ctrlpt_handle == -1) {
+		RETURN_FALSE;
+	}
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sl", &url, &url_len, &time_out) == FAILURE) {
+		return;
+	}
+
+	php_upnp_error_code = UpnpSubscribe(php_upnp_ctrlpt_handle, url, &time_out, subs_id);
+	
+	if (php_upnp_error_code != UPNP_E_SUCCESS) {
+		RETURN_FALSE;
+	}
+	
+	RETURN_STRING(subs_id, 1);
+}
+/* }}} */
+
+/* {{{ */
+PHP_FUNCTION(upnp_unsubscribe)
+{
+	char *subs_id;
+	int subs_id_len;
+	
+	if (php_upnp_ctrlpt_handle == -1) {
+		RETURN_FALSE;
+	}
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &subs_id, &subs_id_len) == FAILURE) {
+		return;
+	}
+
+	php_upnp_error_code = UpnpUnSubscribe(php_upnp_ctrlpt_handle, subs_id);
+	
+	if (php_upnp_error_code != UPNP_E_SUCCESS) {
+		RETURN_FALSE;
+	}
+	
+	RETURN_TRUE;
+}
+/* }}} */
 
 /* {{{ upnp_functions[]
  */
@@ -762,9 +809,11 @@ const zend_function_entry upnp_functions[] = {
 	PHP_FE(upnp_register_root_device_ext, NULL)	
 	PHP_FE(upnp_unregister_root_device, NULL)
 	PHP_FE(upnp_set_max_content_length, NULL)
-	PHP_FE(upnp_set_webserver_rootdir, NULL)
 	PHP_FE(upnp_search_async, NULL)
 	PHP_FE(upnp_send_advertisement, NULL)
+	PHP_FE(upnp_subscribe, NULL)
+	PHP_FE(upnp_unsubscribe, NULL)
+	PHP_FE(upnp_set_webserver_rootdir, NULL)
 	{NULL, NULL, NULL}
 };
 /* }}} */
