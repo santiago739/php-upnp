@@ -278,8 +278,8 @@ static int php_upnp_callback_event_handler(Upnp_EventType EventType, void *Event
 	MAKE_STD_ZVAL(args[2]);
 	
 	switch ( EventType ) {
-		case UPNP_DISCOVERY_ADVERTISEMENT_ALIVE:
 		case UPNP_DISCOVERY_ADVERTISEMENT_BYEBYE:
+		case UPNP_DISCOVERY_ADVERTISEMENT_ALIVE:
 		case UPNP_DISCOVERY_SEARCH_RESULT:
 		{
 			struct Upnp_Discovery *d_event = (struct Upnp_Discovery *)Event;
@@ -288,11 +288,24 @@ static int php_upnp_callback_event_handler(Upnp_EventType EventType, void *Event
 		}
 		break;
 			
+		case UPNP_DISCOVERY_SEARCH_TIMEOUT:
+			/* Nothing to do here... */
+		break;
+			
+		case UPNP_EVENT_SUBSCRIBE_COMPLETE:
+		case UPNP_EVENT_UNSUBSCRIBE_COMPLETE:
+		case UPNP_EVENT_RENEWAL_COMPLETE:
+		{
+			struct Upnp_Event_Subscribe *es_event = (struct Upnp_Event_Subscribe *)Event;
+			
+			ZVAL_STRING(args[2], estrdup(es_event->Sid), 1);
+		}
+		break;
+			
 		default:
 			ZVAL_STRING(args[2], estrdup("other EventType recieved"), 0);
 		break;
 	}
-	
 
 
 	if (call_user_function(EG(function_table), NULL, callback->func, &retval, 3, args TSRMLS_CC) == SUCCESS) {
@@ -665,25 +678,6 @@ PHP_FUNCTION(upnp_set_max_content_length)
 /* }}} */
 
 /* {{{ */
-PHP_FUNCTION(upnp_set_webserver_rootdir)
-{
-	char *root_dir;
-	int root_dir_len;
-
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &root_dir, &root_dir_len) == FAILURE) {
-		return;
-	}
-
-	php_upnp_error_code = UpnpSetWebServerRootDir(root_dir);
-	
-	if (php_upnp_error_code != UPNP_E_SUCCESS) {
-		RETURN_FALSE;
-	}
-	RETURN_TRUE;
-}
-/* }}} */
-
-/* {{{ */
 PHP_FUNCTION(upnp_search_async)
 {
 	char *target = NULL;
@@ -748,6 +742,121 @@ PHP_FUNCTION(upnp_send_advertisement)
 /* }}} */
 
 /* {{{ */
+PHP_FUNCTION(upnp_set_max_subscriptions)
+{
+	int max_subsc;
+	
+	if (php_upnp_device_handle == -1) {
+		RETURN_FALSE;
+	}
+	
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "l", &max_subsc) == FAILURE) {
+		return;
+	}
+
+	php_upnp_error_code =  UpnpSetMaxSubscriptions(php_upnp_device_handle, max_subsc);
+
+	if (php_upnp_error_code != UPNP_E_SUCCESS) {
+		RETURN_FALSE;
+	}
+	
+	RETURN_TRUE;
+}
+/* }}} */
+
+/* {{{ */
+PHP_FUNCTION(upnp_set_max_subscription_timeout)
+{
+	int max_time_out;
+	
+	if (php_upnp_device_handle == -1) {
+		RETURN_FALSE;
+	}
+	
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "l", &max_time_out) == FAILURE) {
+		return;
+	}
+
+	php_upnp_error_code =  UpnpSetMaxSubscriptionTimeOut(php_upnp_device_handle, max_time_out);
+
+	if (php_upnp_error_code != UPNP_E_SUCCESS) {
+		RETURN_FALSE;
+	}
+	
+	RETURN_TRUE;
+}
+/* }}} */
+
+/* {{{ */
+PHP_FUNCTION(upnp_renew_subscription)
+{
+	char *subs_id;
+	int subs_id_len, time_out;
+	
+	if (php_upnp_ctrlpt_handle == -1) {
+		RETURN_FALSE;
+	}
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sl", &subs_id, &subs_id_len, &time_out) == FAILURE) {
+		return;
+	}
+
+	php_upnp_error_code = UpnpRenewSubscription(php_upnp_ctrlpt_handle, &time_out, subs_id);
+	
+	if (php_upnp_error_code != UPNP_E_SUCCESS) {
+		RETURN_FALSE;
+	}
+	
+	RETURN_TRUE;
+}
+/* }}} */
+
+/* {{{ */
+PHP_FUNCTION(upnp_renew_subscription_async)
+{
+	char *subs_id, *callback_name;
+	int subs_id_len, time_out;
+	zval *zcallback, *zarg;
+	php_upnp_callback_struct *callback;
+	
+	if (php_upnp_ctrlpt_handle == -1) {
+		RETURN_FALSE;
+	}
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "slzz", &subs_id, &subs_id_len, &time_out, &zcallback, &zarg) == FAILURE) {
+		return;
+	}
+	
+	if (!zend_is_callable(zcallback, 0, &callback_name)) {
+		php_error_docref(NULL TSRMLS_CC, E_WARNING, "'%s' is not a valid callback", callback_name);
+		efree(callback_name);
+		RETURN_FALSE;
+	}
+	efree(callback_name); 
+	
+	zval_add_ref(&zcallback);
+	if (zarg) {
+		zval_add_ref(&zarg);
+	} else {
+		ALLOC_INIT_ZVAL(zarg);
+	}
+
+	callback = emalloc(sizeof(php_upnp_callback_struct));
+	callback->func = zcallback;
+	callback->arg = zarg;
+
+	php_upnp_error_code = UpnpRenewSubscriptionAsync(php_upnp_ctrlpt_handle, time_out, subs_id,
+							php_upnp_callback_event_handler, callback);
+	
+	if (php_upnp_error_code != UPNP_E_SUCCESS) {
+		RETURN_FALSE;
+	}
+	
+	RETURN_TRUE;
+}
+/* }}} */
+
+/* {{{ */
 PHP_FUNCTION(upnp_subscribe)
 {
 	char *url;
@@ -769,6 +878,53 @@ PHP_FUNCTION(upnp_subscribe)
 	}
 	
 	RETURN_STRING(subs_id, 1);
+}
+/* }}} */
+
+/* {{{ */
+PHP_FUNCTION(upnp_subscribe_async)
+{
+	char *url, *callback_name;
+	int url_len, time_out;
+	zval *zcallback, *zarg;
+	php_upnp_callback_struct *callback;
+	
+	if (php_upnp_ctrlpt_handle == -1) {
+		RETURN_FALSE;
+	}
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "slzz", &url, &url_len, &time_out, &zcallback, &zarg) == FAILURE) {
+		return;
+	}
+
+	if (!zend_is_callable(zcallback, 0, &callback_name)) {
+		php_error_docref(NULL TSRMLS_CC, E_WARNING, "'%s' is not a valid callback", callback_name);
+		efree(callback_name);
+		RETURN_FALSE;
+	}
+	efree(callback_name); 
+	
+	zval_add_ref(&zcallback);
+	if (zarg) {
+		zval_add_ref(&zarg);
+	} else {
+		ALLOC_INIT_ZVAL(zarg);
+	}
+
+	callback = emalloc(sizeof(php_upnp_callback_struct));
+	callback->func = zcallback;
+	callback->arg = zarg;
+	
+	
+	php_upnp_error_code = UpnpSubscribeAsync(php_upnp_ctrlpt_handle, 
+							url, time_out, php_upnp_callback_event_handler,
+							callback);
+	
+	if (php_upnp_error_code != UPNP_E_SUCCESS) {
+		RETURN_FALSE;
+	}
+	
+	RETURN_TRUE;
 }
 /* }}} */
 
@@ -796,6 +952,71 @@ PHP_FUNCTION(upnp_unsubscribe)
 }
 /* }}} */
 
+/* {{{ */
+PHP_FUNCTION(upnp_unsubscribe_async)
+{
+	char *subs_id, *callback_name;
+	int subs_id_len;
+	zval *zcallback, *zarg;
+	php_upnp_callback_struct *callback;
+	
+	if (php_upnp_ctrlpt_handle == -1) {
+		RETURN_FALSE;
+	}
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "szz", &subs_id, &subs_id_len, &zcallback, &zarg) == FAILURE) {
+		return;
+	}
+
+	if (!zend_is_callable(zcallback, 0, &callback_name)) {
+		php_error_docref(NULL TSRMLS_CC, E_WARNING, "'%s' is not a valid callback", callback_name);
+		efree(callback_name);
+		RETURN_FALSE;
+	}
+	efree(callback_name); 
+	
+	zval_add_ref(&zcallback);
+	if (zarg) {
+		zval_add_ref(&zarg);
+	} else {
+		ALLOC_INIT_ZVAL(zarg);
+	}
+
+	callback = emalloc(sizeof(php_upnp_callback_struct));
+	callback->func = zcallback;
+	callback->arg = zarg;
+	
+	
+	php_upnp_error_code = UpnpUnSubscribeAsync(php_upnp_ctrlpt_handle, 
+							subs_id, php_upnp_callback_event_handler, callback);
+	
+	if (php_upnp_error_code != UPNP_E_SUCCESS) {
+		RETURN_FALSE;
+	}
+	
+	RETURN_TRUE;
+}
+/* }}} */
+
+/* {{{ */
+PHP_FUNCTION(upnp_set_webserver_rootdir)
+{
+	char *root_dir;
+	int root_dir_len;
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &root_dir, &root_dir_len) == FAILURE) {
+		return;
+	}
+
+	php_upnp_error_code = UpnpSetWebServerRootDir(root_dir);
+	
+	if (php_upnp_error_code != UPNP_E_SUCCESS) {
+		RETURN_FALSE;
+	}
+	RETURN_TRUE;
+}
+/* }}} */
+
 /* {{{ upnp_functions[]
  */
 const zend_function_entry upnp_functions[] = {
@@ -811,8 +1032,14 @@ const zend_function_entry upnp_functions[] = {
 	PHP_FE(upnp_set_max_content_length, NULL)
 	PHP_FE(upnp_search_async, NULL)
 	PHP_FE(upnp_send_advertisement, NULL)
+	PHP_FE(upnp_set_max_subscriptions, NULL)
+	PHP_FE(upnp_set_max_subscription_timeout, NULL)
+	PHP_FE(upnp_renew_subscription, NULL)
+	PHP_FE(upnp_renew_subscription_async, NULL)
 	PHP_FE(upnp_subscribe, NULL)
+	PHP_FE(upnp_subscribe_async, NULL)
 	PHP_FE(upnp_unsubscribe, NULL)
+	PHP_FE(upnp_unsubscribe_async, NULL)
 	PHP_FE(upnp_set_webserver_rootdir, NULL)
 	{NULL, NULL, NULL}
 };

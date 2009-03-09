@@ -1,8 +1,23 @@
 <?php
-$br = (php_sapi_name() == "cli")? "\n":"<br>";
 
-$callback = 'ctrl_point_callback_event_handler';
+declare(ticks=1);
+pcntl_signal(SIGINT, "ctrl_point_sig_int");
 
+function ctrl_point_sig_int($signal)
+{
+	fputs(STDERR, "\nSignal SIGINT was caught\n");
+
+	echo "=========================================================\n";
+	echo "[CALL]: upnp_unregister_client() \n";
+	echo "---------------------------------------------------------\n";
+
+	$res = upnp_unregister_client();
+	echo "[RESULT]: ";
+	var_dump($res);
+	echo "=========================================================\n\n\n";
+
+	exit();
+}
 
 function ctrl_point_callback_event_handler($args, $event_type, $event)
 {
@@ -36,7 +51,7 @@ function ctrl_point_callback_event_handler($args, $event_type, $event)
 	if (($xml->device->deviceType == $tv_device_type) && ($subs_id == 0))
 	{
 		$subsc_url = sprintf('%s://%s:%d%s', $url['scheme'], $url['host'], $url['port'], $event_sub_url);
-		$time_out = 10;
+		$time_out = 5;
 
 		printf("Subscribing to EventURL %s ...\n", $subsc_url);
 
@@ -45,8 +60,16 @@ function ctrl_point_callback_event_handler($args, $event_type, $event)
 		if ($subs_id)
 		{
 			printf("Subscribed to EventURL with SID=%s\n", $subs_id);
+			sleep(6);
+
+			echo "\n[CALL]: upnp_renew_subscription()\n";
+			$res = upnp_renew_subscription($subs_id, 5);
+			echo "[RESULT]: ";
+			var_dump($res);
+
 			sleep(5);
-			echo "[CALL]: upnp_unsubscribe()\n";
+
+			echo "\n[CALL]: upnp_unsubscribe()\n";
 			$res = upnp_unsubscribe($subs_id);
 			echo "[RESULT]: ";
 			var_dump($res);
@@ -55,22 +78,154 @@ function ctrl_point_callback_event_handler($args, $event_type, $event)
 		{
 			show_error();
 		}
-	}			
+	}	
 	
+	echo "=========================================================\n\n\n";
+}
+
+function ctrl_point_callback_event_handler_async($args, $event_type, $event)
+{
+	$subs_id = 0;
+
+	$tv_device_type = "urn:schemas-upnp-org:device:tvdevice:1";
+	
+	echo "=========================================================\n";
+	echo "[CALL]: ctrl_point_callback_event_handler_async() \n";
+	echo "---------------------------------------------------------\n";
+
+	echo "args: ";
+	print_r($args);
+	printf("EventType: %s\n", $event_type);
+	printf("Event: %s\n", $event);
+
+	$url = parse_url($event);
+
+	if ($url['scheme'] != 'http')
+	{
+		echo "=========================================================\n\n\n";
+		return false;
+	}
+
+	$xml = new SimpleXMLElement($event, NULL, TRUE);
+	$event_sub_url = $xml->device->serviceList->service[0]->eventSubURL;
+	printf("deviceType: %s\n", $xml->device->deviceType);
+	printf("eventSubURL: %s\n", $event_sub_url);
+
+	if (($xml->device->deviceType == $tv_device_type) && ($subs_id == 0))
+	{
+		$subsc_url = sprintf('%s://%s:%d%s', $url['scheme'], $url['host'], $url['port'], $event_sub_url);
+		$time_out = 5;
+
+		printf("Subscribing to EventURL %s ...\n", $subsc_url);
+
+		$res = ctrl_point_subscribe_async($subsc_url, $time_out);
+
+		if ($res)
+		{
+			printf("Async subscribing...\n");
+			var_dump($res);
+		}
+		else
+		{
+			show_error();
+		}
+	}	
+		
+	
+	echo "=========================================================\n\n\n";
+}
+
+function ctrl_point_subscribe_callback_event_handler($args, $event_type, $event)
+{
+	$subs_id = $event;
+
+	echo "=========================================================\n";
+	echo "[CALL]: ctrl_point_subscribe_callback_event_handler() \n";
+	echo "---------------------------------------------------------\n";
+
+	echo "args: ";
+	print_r($args);
+	printf("EventType: %s\n", $event_type);
+	printf("Event: %s\n", $event);
+
+	if ($subs_id)
+	{
+		printf("Subscribed to EventURL with SID=%s\n", $subs_id);
+		sleep(6);
+
+		echo "\n[CALL]: upnp_renew_subscription_async()\n";
+		$callback = 'ctrl_point_renew_subscribe_callback_event_handler';
+		$args = array('renewsubscribe_async');
+		$time_out = 5;
+		$res = upnp_renew_subscription_async($subs_id, $time_out, $callback, $args);
+		echo "[RESULT]: ";
+		var_dump($res);
+
+		echo "\n[CALL]: upnp_unsubscribe_async()\n";
+		$callback = 'ctrl_point_unsubscribe_callback_event_handler';
+		$args = array('unsubscribe_async');
+		$res = upnp_unsubscribe_async($subs_id, $callback, $args);
+		echo "[RESULT]: ";
+		var_dump($res);
+	}
+	else
+	{
+		show_error();
+	}
+	
+	echo "=========================================================\n\n\n";
+}
+
+function ctrl_point_renew_subscribe_callback_event_handler($args, $event_type, $event)
+{
+	echo "=========================================================\n";
+	echo "[CALL]: ctrl_point_renew_subscribe_callback_event_handler() \n";
+	echo "---------------------------------------------------------\n";
+
+	echo "args: ";
+	print_r($args);
+	printf("EventType: %s\n", $event_type);
+	printf("Event: %s\n", $event);
+
+	echo "=========================================================\n\n\n";
+}
+
+function ctrl_point_unsubscribe_callback_event_handler($args, $event_type, $event)
+{
+	echo "=========================================================\n";
+	echo "[CALL]: ctrl_point_unsubscribe_callback_event_handler() \n";
+	echo "---------------------------------------------------------\n";
+
+	echo "args: ";
+	print_r($args);
+	printf("EventType: %s\n", $event_type);
+	printf("Event: %s\n", $event);
+
 	echo "=========================================================\n\n\n";
 }
 
 function ctrl_point_subscribe($url, $time_out)
 {
-	echo "[CALL]: upnp_subscribe()\n";
+	echo "\n[CALL]: upnp_subscribe()\n";
 	$res = upnp_subscribe($url, $time_out);
+	return $res;
+	
+}
+
+function ctrl_point_subscribe_async($url, $time_out)
+{
+	$callback = 'ctrl_point_subscribe_callback_event_handler';
+	$args = array('subscribe_async');
+
+	echo "\n[CALL]: upnp_subscribe_async()\n";
+	$res = upnp_subscribe_async($url, $time_out, $callback, $args);
 	return $res;
 	
 }
 
 function show_error()
 {
-	echo "[ERROR] " . upnp_error() . "\n";
+	echo "\n[ERROR] " . upnp_error() . "\n";
 }
 
 /* ########################################################### */
@@ -78,6 +233,8 @@ echo "=========================================================\n";
 echo "[CALL]: upnp_register_client() \n";
 echo "---------------------------------------------------------\n";
 
+$callback = 'ctrl_point_callback_event_handler_async';
+//$callback = 'ctrl_point_callback_event_handler';
 $args = array('register_client');
 $res = upnp_register_client($callback, $args);
 echo "[RESULT]: ";
@@ -85,11 +242,10 @@ var_dump($res);
 if (!$res)
 {
 	show_error();
-	die('Failed to register client');
+	die("Failed to register client\n");
 }
 echo "=========================================================\n\n\n";
 /* ########################################################### */
-
 
 /* ########################################################### */
 //echo "check: upnp_search_async() $br";
@@ -107,12 +263,8 @@ while(true)
 	sleep(1);
 }
 
-/* ########################################################### */
-echo "check: upnp_unregister_client() $br";
-var_dump(upnp_unregister_client());
-/* ########################################################### */
 
 
 
-var_dump();
+
 ?>
