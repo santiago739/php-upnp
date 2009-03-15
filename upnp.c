@@ -37,9 +37,11 @@ typedef struct _php_upnp_callback_struct { /* {{{ */
 } php_upnp_callback_struct;
 /* }}} */
 
-static int le_upnp;
+static int le_upnp_discovery;
+
 static int php_upnp_initialized = 0;
 static int php_upnp_error_code = 0;
+
 static UpnpClient_Handle php_upnp_ctrlpt_handle = -1;
 static UpnpDevice_Handle php_upnp_device_handle = -1;
 
@@ -257,6 +259,14 @@ static const char *php_upnp_get_event_type_name(Upnp_EventType EventType) /* {{{
 }
 /* }}} */
 
+static void php_upnp_event_discovery_dtor(zend_rsrc_list_entry *rsrc TSRMLS_DC) 
+{ 
+    struct Upnp_Discovery *d_event = (struct Upnp_Discovery *)rsrc->ptr;
+	
+	efree(d_event); 
+	//pefree(d_event, 1); 
+}
+
 static int php_upnp_callback_event_handler(Upnp_EventType EventType, void *Event, void *Cookie) /* {{{ */
 {
 	zval *args[3];
@@ -273,24 +283,59 @@ static int php_upnp_callback_event_handler(Upnp_EventType EventType, void *Event
 	args[0]->refcount++;
 	
 	MAKE_STD_ZVAL(args[1]);
-	ZVAL_STRING(args[1], estrdup(php_upnp_get_event_type_name(EventType)), 1);
+	//ZVAL_STRING(args[1], estrdup(php_upnp_get_event_type_name(EventType)), 1);
+	ZVAL_LONG(args[1], EventType); 
 	
 	MAKE_STD_ZVAL(args[2]);
 	
-	switch ( EventType ) {
+	switch (EventType) {
 		case UPNP_DISCOVERY_ADVERTISEMENT_BYEBYE:
 		case UPNP_DISCOVERY_ADVERTISEMENT_ALIVE:
 		case UPNP_DISCOVERY_SEARCH_RESULT:
 		{
-			struct Upnp_Discovery *d_event = (struct Upnp_Discovery *)Event;
+			struct Upnp_Discovery *d_event, *d_event_copy;
+			char *hash_key;
+			int hash_key_len, hash_exists = 0;
+			list_entry *existing_event; 
 			
-			ZVAL_STRING(args[2], estrdup(d_event->Location), 1);
+			d_event = (struct Upnp_Discovery *)Event;
+			
+			hash_key_len = spprintf(&hash_key, 0, 
+            	"UpnpDiscoveryEvent:%s", d_event->Location); 
+			if (zend_hash_find(&EG(persistent_list), hash_key, 
+					hash_key_len + 1, (void **)&existing_event) == SUCCESS) { 
+				ZEND_REGISTER_RESOURCE(args[2], existing_event->ptr, le_upnp_discovery); 
+				efree(hash_key); 
+				hash_exists = 1;
+			} 
+			
+			if (!hash_exists)
+			{
+				if (!d_event) { 
+					return 1;
+				} 
+				
+				d_event_copy = emalloc(sizeof(struct Upnp_Discovery));
+				*d_event_copy = *d_event;
+				
+				list_entry le; 
+
+				ZEND_REGISTER_RESOURCE(args[2], d_event_copy, le_upnp_discovery); 
+
+				le.type = le_upnp_discovery; 
+				le.ptr = d_event_copy; 
+
+				zend_hash_update(&EG(persistent_list), hash_key, hash_key_len + 1, 
+					(void*)&le, sizeof(list_entry), NULL); 
+
+				efree(hash_key); 
+			}
+			
+			break;
 		}
-		break;
 			
 		case UPNP_DISCOVERY_SEARCH_TIMEOUT:
-			/* Nothing to do here... */
-		break;
+			break;
 			
 		case UPNP_EVENT_SUBSCRIBE_COMPLETE:
 		case UPNP_EVENT_UNSUBSCRIBE_COMPLETE:
@@ -299,14 +344,14 @@ static int php_upnp_callback_event_handler(Upnp_EventType EventType, void *Event
 			struct Upnp_Event_Subscribe *es_event = (struct Upnp_Event_Subscribe *)Event;
 			
 			ZVAL_STRING(args[2], estrdup(es_event->Sid), 1);
+			
+			break;
 		}
-		break;
 			
 		default:
 			ZVAL_STRING(args[2], estrdup("other EventType recieved"), 0);
 		break;
 	}
-
 
 	if (call_user_function(EG(function_table), NULL, callback->func, &retval, 3, args TSRMLS_CC) == SUCCESS) {
 		zval_dtor(&retval);
@@ -333,6 +378,11 @@ PHP_MINIT_FUNCTION(upnp)
 		/* UpnpInit() should be called once per process */
 		php_upnp_initialize(UPNP_G(ip), UPNP_G(port));
 	//}
+	
+	le_upnp_discovery = zend_register_list_destructors_ex(
+							NULL, php_upnp_event_discovery_dtor, "UPNP Event", 
+							module_number); 
+	
 	return SUCCESS;
 }
 /* }}} */
@@ -1017,6 +1067,67 @@ PHP_FUNCTION(upnp_set_webserver_rootdir)
 }
 /* }}} */
 
+/* {{{ */
+PHP_FUNCTION(upnp_get_resource_data)
+{
+	int event_type;
+	zval *event;
+	
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "rl", &event, &event_type) == FAILURE) {
+		return;
+	}
+	
+	switch (event_type) {
+		case UPNP_DISCOVERY_ADVERTISEMENT_BYEBYE:
+		case UPNP_DISCOVERY_ADVERTISEMENT_ALIVE:
+		case UPNP_DISCOVERY_SEARCH_RESULT:
+		{
+			struct Upnp_Discovery *d_event;
+			
+			ZEND_FETCH_RESOURCE(d_event, struct Upnp_Discovery *, &event, -1, "UPNP Event", le_upnp_discovery); 
+			
+			if (d_event) {
+				array_init(return_value); 
+				add_assoc_long(return_value, "err_code", d_event->ErrCode);
+				add_assoc_long(return_value, "expires", d_event->Expires);
+				add_assoc_string(return_value, "device_id", d_event->DeviceId, 1); 
+				add_assoc_string(return_value, "device_type", d_event->DeviceType, 1); 
+				add_assoc_string(return_value, "service_type", d_event->ServiceType, 1); 
+				add_assoc_string(return_value, "service_ver", d_event->ServiceVer, 1); 
+				add_assoc_string(return_value, "location", d_event->Location, 1); 
+				add_assoc_string(return_value, "os", d_event->Os, 1); 
+				add_assoc_string(return_value, "date", d_event->Date, 1); 
+				add_assoc_string(return_value, "ext", d_event->Ext, 1); 
+				
+				return; 
+			}
+			
+			break;
+		}
+			
+		case UPNP_DISCOVERY_SEARCH_TIMEOUT:
+			break;
+			
+		case UPNP_EVENT_SUBSCRIBE_COMPLETE:
+		case UPNP_EVENT_UNSUBSCRIBE_COMPLETE:
+		case UPNP_EVENT_RENEWAL_COMPLETE:
+		{
+			struct Upnp_Event_Subscribe *es_event;
+			
+			//ZVAL_STRING(args[2], estrdup(es_event->Sid), 1);
+			
+			break;
+		}
+			
+		default:
+			break;
+	}
+	
+	
+	RETURN_FALSE;
+}
+/* }}} */
+
 /* {{{ upnp_functions[]
  */
 const zend_function_entry upnp_functions[] = {
@@ -1041,6 +1152,7 @@ const zend_function_entry upnp_functions[] = {
 	PHP_FE(upnp_unsubscribe, NULL)
 	PHP_FE(upnp_unsubscribe_async, NULL)
 	PHP_FE(upnp_set_webserver_rootdir, NULL)
+	PHP_FE(upnp_get_resource_data, NULL)
 	{NULL, NULL, NULL}
 };
 /* }}} */

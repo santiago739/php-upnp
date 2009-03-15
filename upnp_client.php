@@ -34,8 +34,12 @@ function ctrl_point_callback_event_handler($args, $event_type, $event)
 
 	printf("EventType: %s\n", $event_type);
 	printf("Event: %s\n", $event);
+	
+	$event_data = upnp_get_resource_data($event, $event_type);
+	$location = $event_data['location'];
+	printf("EventLocation: %s\n", $location);
 
-	$url = parse_url($event);
+	$url = parse_url($location);
 
 	if ($url['scheme'] != 'http')
 	{
@@ -43,7 +47,7 @@ function ctrl_point_callback_event_handler($args, $event_type, $event)
 		return false;
 	}
 
-	$xml = new SimpleXMLElement($event, NULL, TRUE);
+	$xml = new SimpleXMLElement($location, NULL, TRUE);
 	$event_sub_url = $xml->device->serviceList->service[0]->eventSubURL;
 	printf("deviceType: %s\n", $xml->device->deviceType);
 	printf("eventSubURL: %s\n", $event_sub_url);
@@ -233,8 +237,8 @@ echo "=========================================================\n";
 echo "[CALL]: upnp_register_client() \n";
 echo "---------------------------------------------------------\n";
 
-$callback = 'ctrl_point_callback_event_handler_async';
-//$callback = 'ctrl_point_callback_event_handler';
+$callback = 'ctrl_point_callback_event_handler';
+//$callback = 'ctrl_point_callback_event_handler_async';
 $args = array('register_client');
 $res = upnp_register_client($callback, $args);
 echo "[RESULT]: ";
