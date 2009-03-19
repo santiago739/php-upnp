@@ -21,7 +21,8 @@ function ctrl_point_sig_int($signal)
 
 function ctrl_point_callback_event_handler($args, $event_type, $event)
 {
-	$subs_id = 0;
+	//$subs_id = 0;
+	$services = array();
 
 	$tv_device_type = "urn:schemas-upnp-org:device:tvdevice:1";
 	
@@ -32,10 +33,13 @@ function ctrl_point_callback_event_handler($args, $event_type, $event)
 	echo "args: ";
 	print_r($args);
 
-	printf("EventType: %s\n", $event_type);
+	printf("EventType: %s (%d)\n", upnp_get_event_type_name($event_type), $event_type);
 	printf("Event: %s\n", $event);
 	
 	$event_data = upnp_get_resource_data($event, $event_type);
+	echo "event_data: ";
+	print_r($event_data);
+	
 	$location = $event_data['location'];
 	printf("EventLocation: %s\n", $location);
 
@@ -48,39 +52,48 @@ function ctrl_point_callback_event_handler($args, $event_type, $event)
 	}
 
 	$xml = new SimpleXMLElement($location, NULL, TRUE);
-	$event_sub_url = $xml->device->serviceList->service[0]->eventSubURL;
 	printf("deviceType: %s\n", $xml->device->deviceType);
-	printf("eventSubURL: %s\n", $event_sub_url);
 
-	if (($xml->device->deviceType == $tv_device_type) && ($subs_id == 0))
+	if ($xml->device->deviceType == $tv_device_type)
 	{
-		$subsc_url = sprintf('%s://%s:%d%s', $url['scheme'], $url['host'], $url['port'], $event_sub_url);
-		$time_out = 5;
-
-		printf("Subscribing to EventURL %s ...\n", $subsc_url);
-
-		$subs_id = ctrl_point_subscribe($subsc_url, $time_out);
-
-		if ($subs_id)
+		foreach ($xml->device->serviceList->service as $key=>$service)
 		{
-			printf("Subscribed to EventURL with SID=%s\n", $subs_id);
-			sleep(6);
+			//$event_sub_url = $xml->device->serviceList->service[0]->eventSubURL;
+			$event_sub_url = $service->eventSubURL;
+			
+			printf("eventSubURL: %s\n", $event_sub_url);
+			
+			$time_out = 5;
+			$services[$key]['subsc_url'] = sprintf('%s://%s:%d%s', $url['scheme'], $url['host'], $url['port'], $event_sub_url);
+			
 
-			echo "\n[CALL]: upnp_renew_subscription()\n";
-			$res = upnp_renew_subscription($subs_id, 5);
-			echo "[RESULT]: ";
-			var_dump($res);
+			printf("\nSubscribing to EventURL %s ...\n", $services[$key]['subsc_url']);
 
-			sleep(5);
+			$services[$key]['subs_id'] = ctrl_point_subscribe($services[$key]['subsc_url'], $time_out);
 
-			echo "\n[CALL]: upnp_unsubscribe()\n";
-			$res = upnp_unsubscribe($subs_id);
-			echo "[RESULT]: ";
-			var_dump($res);
-		}
-		else
-		{
-			show_error();
+			if ($services[$key]['subs_id'])
+			{
+				printf("Subscribed to EventURL with SID=%s\n\n", $services[$key]['subs_id']);
+				
+				//sleep(6);
+				/*
+				echo "\n[CALL]: upnp_renew_subscription()\n";
+				$res = upnp_renew_subscription($subs_id, 5);
+				echo "[RESULT]: ";
+				var_dump($res);
+
+				sleep(5);
+
+				echo "\n[CALL]: upnp_unsubscribe()\n";
+				$res = upnp_unsubscribe($subs_id);
+				echo "[RESULT]: ";
+				var_dump($res);
+				*/
+			}
+			else
+			{
+				show_error();
+			}
 		}
 	}	
 	
@@ -102,7 +115,13 @@ function ctrl_point_callback_event_handler_async($args, $event_type, $event)
 	printf("EventType: %s\n", $event_type);
 	printf("Event: %s\n", $event);
 
-	$url = parse_url($event);
+	//$url = parse_url($event);
+
+	$event_data = upnp_get_resource_data($event, $event_type);
+	$location = $event_data['location'];
+	printf("EventLocation: %s\n", $location);
+
+	$url = parse_url($location);
 
 	if ($url['scheme'] != 'http')
 	{
@@ -110,7 +129,7 @@ function ctrl_point_callback_event_handler_async($args, $event_type, $event)
 		return false;
 	}
 
-	$xml = new SimpleXMLElement($event, NULL, TRUE);
+	$xml = new SimpleXMLElement($location, NULL, TRUE);
 	$event_sub_url = $xml->device->serviceList->service[0]->eventSubURL;
 	printf("deviceType: %s\n", $xml->device->deviceType);
 	printf("eventSubURL: %s\n", $event_sub_url);
@@ -141,7 +160,7 @@ function ctrl_point_callback_event_handler_async($args, $event_type, $event)
 
 function ctrl_point_subscribe_callback_event_handler($args, $event_type, $event)
 {
-	$subs_id = $event;
+	//$subs_id = $event;
 
 	echo "=========================================================\n";
 	echo "[CALL]: ctrl_point_subscribe_callback_event_handler() \n";
@@ -151,6 +170,9 @@ function ctrl_point_subscribe_callback_event_handler($args, $event_type, $event)
 	print_r($args);
 	printf("EventType: %s\n", $event_type);
 	printf("Event: %s\n", $event);
+
+	$event_data = upnp_get_resource_data($event, $event_type);
+	$subs_id = $event_data['sid'];
 
 	if ($subs_id)
 	{
@@ -191,6 +213,10 @@ function ctrl_point_renew_subscribe_callback_event_handler($args, $event_type, $
 	printf("EventType: %s\n", $event_type);
 	printf("Event: %s\n", $event);
 
+	$event_data = upnp_get_resource_data($event, $event_type);
+	echo "event_data: ";
+	print_r($event_data);
+
 	echo "=========================================================\n\n\n";
 }
 
@@ -204,6 +230,10 @@ function ctrl_point_unsubscribe_callback_event_handler($args, $event_type, $even
 	print_r($args);
 	printf("EventType: %s\n", $event_type);
 	printf("Event: %s\n", $event);
+	
+	$event_data = upnp_get_resource_data($event, $event_type);
+	echo "event_data: ";
+	print_r($event_data);
 
 	echo "=========================================================\n\n\n";
 }
@@ -251,14 +281,25 @@ if (!$res)
 echo "=========================================================\n\n\n";
 /* ########################################################### */
 
-/* ########################################################### */
-//echo "check: upnp_search_async() $br";
-//$args = array('search_async');
 
-//$rc = upnp_search_async(5, $TvDeviceType, $callback, $args);
-//var_dump($rc);
 /* ########################################################### */
+/*echo "=========================================================\n";
+echo "[CALL]: upnp_search_async() \n";
+echo "---------------------------------------------------------\n";
 
+$tv_device_type = "urn:schemas-upnp-org:device:tvdevice:1";
+$callback = 'ctrl_point_callback_event_handler';
+$args = array('search_async');
+
+$res= upnp_search_async(5, $tv_device_type, $callback, $args);
+echo "[RESULT]: ";
+var_dump($res);
+if (!$res)
+{
+	show_error();
+}
+echo "=========================================================\n\n\n";*/
+/* ########################################################### */
 
 
 
