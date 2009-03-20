@@ -32,6 +32,10 @@ ZEND_BEGIN_MODULE_GLOBALS(upnp)
 	char *ip;
 	long port;
 	zend_bool enabled;
+	UpnpClient_Handle ctrlpt_handle;
+	UpnpDevice_Handle device_handle;
+	int error_code;
+	int initialized;
 ZEND_END_MODULE_GLOBALS(upnp)
 
 #ifdef ZTS
@@ -42,6 +46,19 @@ ZEND_END_MODULE_GLOBALS(upnp)
 
 #endif	/* PHP_UPNP_H */
 
+#define UPNP_EVENT_RES_NAME "UPNP Event"
+
+#define UPNP_EVENT_TO_RESOURCE(callback, EventType, event, event_copy, le) {  \
+		if ((((callback)->rsrc_id <= 0) || ((callback)->event_type != (EventType))) && (event)) { \
+			(event_copy) = emalloc(sizeof((*event))); \
+			*(event_copy) = *(event); \
+			(callback)->rsrc_id = zend_list_insert((event_copy), (le)); \
+			(callback)->event_type = (EventType); \
+		} else { \
+			(callback)->rsrc_id = -1; \
+			(callback)->event_type = -1; \
+		} \
+	}
 
 /*
  * Local variables:

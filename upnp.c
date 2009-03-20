@@ -287,106 +287,6 @@ static void php_upnp_event_dtor(zend_rsrc_list_entry *rsrc TSRMLS_DC) /* {{{ */
 }
 /* }}} */
 
-static int _php_upnp_callback_event_handler(Upnp_EventType EventType, void *Event, void *Cookie) /* {{{ */
-{
-	zval *args[3];
-	zval retval;
-	php_upnp_callback_struct *callback = (php_upnp_callback_struct *)Cookie;
-	
-	if (!callback || (php_upnp_callback_mutex == 0)) {
-		return 1;
-	}
-	
-	php_upnp_callback_mutex = 0;
-		
-	args[0] = callback->arg;
-	args[0]->refcount++;
-	
-	MAKE_STD_ZVAL(args[1]);
-	//ZVAL_STRING(args[1], estrdup(php_upnp_get_event_type_name(EventType)), 1);
-	ZVAL_LONG(args[1], EventType); 
-	
-	MAKE_STD_ZVAL(args[2]);
-	
-	switch (EventType) {
-		case UPNP_DISCOVERY_ADVERTISEMENT_BYEBYE:
-		case UPNP_DISCOVERY_ADVERTISEMENT_ALIVE:
-		case UPNP_DISCOVERY_SEARCH_RESULT:
-		{
-			struct Upnp_Discovery *d_event, *d_event_copy;
-			char *hash_key;
-			int hash_key_len, hash_exists = 0;
-			list_entry *existing_event; 
-			
-			d_event = (struct Upnp_Discovery *)Event;
-			
-			hash_key_len = spprintf(&hash_key, 0, 
-            	"UpnpDiscoveryEvent:%s", d_event->Location); 
-			if (zend_hash_find(&EG(persistent_list), hash_key, 
-					hash_key_len + 1, (void **)&existing_event) == SUCCESS) { 
-				ZEND_REGISTER_RESOURCE(args[2], existing_event->ptr, le_upnp_discovery);
-				efree(hash_key); 
-				
-			} 
-			
-			if (!hash_exists)
-			{
-				if (!d_event) { 
-					return 1;
-				} 
-				
-				d_event_copy = emalloc(sizeof(struct Upnp_Discovery));
-				*d_event_copy = *d_event;
-				
-				list_entry le; 
-
-				callback->rsrc_id = ZEND_REGISTER_RESOURCE(args[2], d_event_copy, le_upnp_discovery); 
-
-				le.type = le_upnp_discovery; 
-				le.ptr = d_event_copy; 
-
-				zend_hash_update(&EG(persistent_list), hash_key, hash_key_len + 1, 
-					(void*)&le, sizeof(list_entry), NULL); 
-
-				efree(hash_key); 
-			}
-			
-			break;
-		}
-			
-		case UPNP_DISCOVERY_SEARCH_TIMEOUT:
-			break;
-			
-		case UPNP_EVENT_SUBSCRIBE_COMPLETE:
-		case UPNP_EVENT_UNSUBSCRIBE_COMPLETE:
-		case UPNP_EVENT_RENEWAL_COMPLETE:
-		{
-			struct Upnp_Event_Subscribe *es_event = (struct Upnp_Event_Subscribe *)Event;
-			
-			ZVAL_STRING(args[2], estrdup(es_event->Sid), 1);
-			
-			break;
-		}
-			
-		default:
-			ZVAL_STRING(args[2], estrdup("other EventType recieved"), 0);
-		break;
-	}
-
-	if (call_user_function(EG(function_table), NULL, callback->func, &retval, 3, args TSRMLS_CC) == SUCCESS) {
-		zval_dtor(&retval);
-	}
-	
-	zval_ptr_dtor(&(args[0]));
-	zval_ptr_dtor(&(args[1])); 
-	zval_ptr_dtor(&(args[2])); 
-		
-	php_upnp_callback_mutex = 1;
-	
-	return 0;
-}
-/* }}} */
-
 static int php_upnp_callback_event_handler(Upnp_EventType EventType, void *Event, void *Cookie) /* {{{ */
 {
 	zval *args[3];
@@ -405,20 +305,10 @@ static int php_upnp_callback_event_handler(Upnp_EventType EventType, void *Event
 		case UPNP_DISCOVERY_ADVERTISEMENT_BYEBYE:
 		{
 			struct Upnp_Discovery *d_event, *d_event_copy;
-			
+	
 			d_event = (struct Upnp_Discovery *)Event;
+			UPNP_EVENT_TO_RESOURCE(callback, EventType, d_event, d_event_copy, le_upnp_discovery);
 			
-			if (((callback->rsrc_id <= 0) || (callback->event_type != EventType)) && d_event) {
-				d_event_copy = emalloc(sizeof(struct Upnp_Discovery));
-				*d_event_copy = *d_event;
-				callback->rsrc_id = zend_list_insert(d_event_copy, le_upnp_discovery);
-				callback->event_type = EventType;
-			}
-			else
-			{
-				callback->rsrc_id = -1;
-				callback->event_type = -1;
-			}
 			break;
 		}
 			
@@ -429,40 +319,18 @@ static int php_upnp_callback_event_handler(Upnp_EventType EventType, void *Event
 			struct Upnp_Event_Subscribe *es_event, *es_event_copy;
 			
 			es_event = (struct Upnp_Event_Subscribe *)Event;
+			UPNP_EVENT_TO_RESOURCE(callback, EventType, es_event, es_event_copy, le_upnp_subscribe);
 			
-			if (((callback->rsrc_id <= 0) || (callback->event_type != EventType)) && es_event) {
-				es_event_copy = emalloc(sizeof(struct Upnp_Event_Subscribe));
-				*es_event_copy = *es_event;
-				callback->rsrc_id = zend_list_insert(es_event_copy, le_upnp_subscribe);
-				callback->event_type = EventType;
-			}
-			else
-			{
-				callback->rsrc_id = -1;
-				callback->event_type = -1;
-			}
 			break;
 		}
 			
 		case UPNP_EVENT_RECEIVED:
 		{
 			struct Upnp_Event *e_event, *e_event_copy;
+
 			e_event = (struct Upnp_Event *)Event;
+			UPNP_EVENT_TO_RESOURCE(callback, EventType, e_event, e_event_copy, le_upnp_event);
 			
-			printf("callback->rsrc_id: %d\n", callback->rsrc_id);
-			printf("callback->event_type: %d\n", callback->event_type);
-			
-			if (((callback->rsrc_id <= 0) || (callback->event_type != EventType)) || e_event) {
-				e_event_copy = emalloc(sizeof(struct Upnp_Event));
-				*e_event_copy = *e_event;
-				callback->rsrc_id = zend_list_insert(e_event_copy, le_upnp_event);
-				callback->event_type = EventType;
-			}
-			else
-			{
-				callback->rsrc_id = -1;
-				callback->event_type = -1;
-			}
 			break;
 		}
 		
@@ -515,15 +383,15 @@ PHP_MINIT_FUNCTION(upnp)
 	}
 	
 	le_upnp_discovery = zend_register_list_destructors_ex(
-							php_upnp_event_discovery_dtor, NULL, PHP_UPNP_EVENT_RES_NAME, 
+							php_upnp_event_discovery_dtor, NULL, UPNP_EVENT_RES_NAME, 
 							module_number);
 	
 	le_upnp_subscribe = zend_register_list_destructors_ex(
-							php_upnp_event_subscribe_dtor, NULL, PHP_UPNP_EVENT_RES_NAME, 
+							php_upnp_event_subscribe_dtor, NULL, UPNP_EVENT_RES_NAME, 
 							module_number);
 	
 	le_upnp_event = zend_register_list_destructors_ex(
-							php_upnp_event_dtor, NULL, PHP_UPNP_EVENT_RES_NAME, 
+							php_upnp_event_dtor, NULL, UPNP_EVENT_RES_NAME, 
 							module_number);
 	
 	return SUCCESS;
@@ -1212,6 +1080,41 @@ PHP_FUNCTION(upnp_unsubscribe_async)
 /* }}} */
 
 /* {{{ */
+PHP_FUNCTION(upnp_send_action)
+{
+	char *action_url, *service_type, *action_name, *param_name, *param_val;
+	int action_url_len, service_type_len, action_name_len, param_name_len, param_val_len;
+	IXML_Document *action_node = NULL, *resp_node = NULL;
+	
+	if (UPNP_G(ctrlpt_handle) == -1) {
+		RETURN_FALSE;
+	}
+	
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sssss", 
+		&action_url, &action_url_len, &service_type, &service_type_len, 
+		&action_name, &action_name_len, &param_name, &param_name_len, 
+		&param_val, &param_val_len) == FAILURE) {
+		return;
+	}
+	
+	if (UpnpAddToAction(&action_node, action_name, service_type, param_name, param_val) != UPNP_E_SUCCESS ) {
+		RETURN_FALSE;
+	}
+	
+	if (action_node) {
+		UPNP_G(error_code) = UpnpSendAction(UPNP_G(ctrlpt_handle), action_url, 
+								service_type, NULL, action_node, &resp_node);
+        ixmlDocument_free(action_node);
+		
+		if (UPNP_G(error_code) == UPNP_E_SUCCESS) {
+			RETURN_STRING(ixmlDocumenttoString(resp_node), 1);
+		}
+	}
+	
+	RETURN_FALSE;
+}
+
+/* {{{ */
 PHP_FUNCTION(upnp_set_webserver_rootdir)
 {
 	char *root_dir;
@@ -1248,7 +1151,7 @@ PHP_FUNCTION(upnp_get_resource_data)
 			struct Upnp_Discovery *d_event;
 			
 			ZEND_FETCH_RESOURCE(d_event, struct Upnp_Discovery *, &event, -1, 
-								PHP_UPNP_EVENT_RES_NAME, le_upnp_discovery); 
+								UPNP_EVENT_RES_NAME, le_upnp_discovery); 
 			
 			if (d_event) {
 				array_init(return_value); 
@@ -1276,7 +1179,7 @@ PHP_FUNCTION(upnp_get_resource_data)
 			struct Upnp_Event_Subscribe *es_event;
 			
 			ZEND_FETCH_RESOURCE(es_event, struct Upnp_Event_Subscribe *, &event, -1, 
-								PHP_UPNP_EVENT_RES_NAME, le_upnp_subscribe); 
+								UPNP_EVENT_RES_NAME, le_upnp_subscribe); 
 			
 			if (es_event) {
 				array_init(return_value); 
@@ -1296,13 +1199,13 @@ PHP_FUNCTION(upnp_get_resource_data)
 			struct Upnp_Event *e_event;
 			
 			ZEND_FETCH_RESOURCE(e_event, struct Upnp_Event *, &event, -1, 
-								PHP_UPNP_EVENT_RES_NAME, le_upnp_event); 
+								UPNP_EVENT_RES_NAME, le_upnp_event); 
 			
 			if (e_event) {
 				array_init(return_value); 
 				add_assoc_long(return_value, "event_key", e_event->EventKey);
 				add_assoc_string(return_value, "sid", e_event->Sid, 1); 
-				add_assoc_string(return_value, "changed_variables", (char *)e_event->ChangedVariables, 1);
+				add_assoc_string(return_value, "changed_variables", ixmlDocumenttoString(e_event->ChangedVariables), 1);
 				
 				return; 
 			}
@@ -1343,6 +1246,7 @@ const zend_function_entry upnp_functions[] = {
 	PHP_FE(upnp_subscribe_async, NULL)
 	PHP_FE(upnp_unsubscribe, NULL)
 	PHP_FE(upnp_unsubscribe_async, NULL)
+	PHP_FE(upnp_send_action, NULL)	
 	PHP_FE(upnp_set_webserver_rootdir, NULL)
 	PHP_FE(upnp_get_resource_data, NULL)
 	{NULL, NULL, NULL}

@@ -1,5 +1,10 @@
 <?php
 
+global $services;
+$services = array();
+
+define('TV_DEVICE_TYPE', 'urn:schemas-upnp-org:device:tvdevice:1');
+
 declare(ticks=1);
 pcntl_signal(SIGINT, "ctrl_point_sig_int");
 
@@ -21,10 +26,9 @@ function ctrl_point_sig_int($signal)
 
 function ctrl_point_callback_event_handler($args, $event_type, $event)
 {
-	//$subs_id = 0;
-	$services = array();
+	//$services = array();
 
-	$tv_device_type = "urn:schemas-upnp-org:device:tvdevice:1";
+	//$tv_device_type = "urn:schemas-upnp-org:device:tvdevice:1";
 	
 	echo "=========================================================\n";
 	echo "[CALL]: ctrl_point_callback_event_handler() \n";
@@ -39,63 +43,20 @@ function ctrl_point_callback_event_handler($args, $event_type, $event)
 	$event_data = upnp_get_resource_data($event, $event_type);
 	echo "event_data: ";
 	print_r($event_data);
-	
-	$location = $event_data['location'];
-	printf("EventLocation: %s\n", $location);
 
-	$url = parse_url($location);
-
-	if ($url['scheme'] != 'http')
+	switch ($event_type)
 	{
-		echo "=========================================================\n\n\n";
-		return false;
+		case 4:
+			ctrl_point_subscribe($event_data);
+			break;
+
+		case 9:
+			ctrl_point_event_recieved($event_data);
+			break;
+
+		default:
+			break;
 	}
-
-	$xml = new SimpleXMLElement($location, NULL, TRUE);
-	printf("deviceType: %s\n", $xml->device->deviceType);
-
-	if ($xml->device->deviceType == $tv_device_type)
-	{
-		foreach ($xml->device->serviceList->service as $key=>$service)
-		{
-			//$event_sub_url = $xml->device->serviceList->service[0]->eventSubURL;
-			$event_sub_url = $service->eventSubURL;
-			
-			printf("eventSubURL: %s\n", $event_sub_url);
-			
-			$time_out = 5;
-			$services[$key]['subsc_url'] = sprintf('%s://%s:%d%s', $url['scheme'], $url['host'], $url['port'], $event_sub_url);
-			
-
-			printf("\nSubscribing to EventURL %s ...\n", $services[$key]['subsc_url']);
-
-			$services[$key]['subs_id'] = ctrl_point_subscribe($services[$key]['subsc_url'], $time_out);
-
-			if ($services[$key]['subs_id'])
-			{
-				printf("Subscribed to EventURL with SID=%s\n\n", $services[$key]['subs_id']);
-				
-				//sleep(6);
-				/*
-				echo "\n[CALL]: upnp_renew_subscription()\n";
-				$res = upnp_renew_subscription($subs_id, 5);
-				echo "[RESULT]: ";
-				var_dump($res);
-
-				sleep(5);
-
-				echo "\n[CALL]: upnp_unsubscribe()\n";
-				$res = upnp_unsubscribe($subs_id);
-				echo "[RESULT]: ";
-				var_dump($res);
-				*/
-			}
-			else
-			{
-				show_error();
-			}
-		}
-	}	
 	
 	echo "=========================================================\n\n\n";
 }
@@ -238,12 +199,89 @@ function ctrl_point_unsubscribe_callback_event_handler($args, $event_type, $even
 	echo "=========================================================\n\n\n";
 }
 
-function ctrl_point_subscribe($url, $time_out)
+function ctrl_point_subscribe($event_data)
 {
-	echo "\n[CALL]: upnp_subscribe()\n";
-	$res = upnp_subscribe($url, $time_out);
-	return $res;
+	echo "\n[CALL]: ctrl_point_subscribe()\n";
+
+	global $services;
+
+	$location = $event_data['location'];
+	printf("EventLocation: %s\n", $location);
+
+	$url = parse_url($location);
+
+	if ($url['scheme'] != 'http')
+	{
+		return false;
+	}
+
+	$xml = new SimpleXMLElement($location, NULL, TRUE);
+	printf("deviceType: %s\n", $xml->device->deviceType);
+
+	if ($xml->device->deviceType == TV_DEVICE_TYPE)
+	{
+		printf("Found Tv device: \n");
+		
+		$i = 0;
+		foreach ($xml->device->serviceList->service as $key=>$service)
+		{
+			printf("Found service: %s\n", $service->serviceType);
+			$services[$i]['service_type'] = $service->serviceType;
+
+			$event_sub_url = $service->eventSubURL;
+			printf("eventSubURL: %s\n", $event_sub_url);
+			$event_control_url = $service->controlURL;
+			printf("controlURL: %s\n", $event_control_url);
+			
+			$time_out = 5;
+			$services[$i]['subsc_url'] = sprintf('%s://%s:%d%s', $url['scheme'], $url['host'], $url['port'], $event_sub_url);
+			$services[$i]['control_url'] = sprintf('%s://%s:%d%s', $url['scheme'], $url['host'], $url['port'], $event_control_url);
+			
+			printf("\nSubscribing to EventURL %s ...\n", $services[$i]['subsc_url']);
+			$services[$i]['subs_id'] = upnp_subscribe($services[$i]['subsc_url'], $time_out);
+
+			if ($services[$i]['subs_id'])
+			{
+				printf("Subscribed to EventURL with SID=%s\n\n", $services[$i]['subs_id']);
+				
+				//sleep(6);
+				/*
+				echo "\n[CALL]: upnp_renew_subscription()\n";
+				$res = upnp_renew_subscription($subs_id, 5);
+				echo "[RESULT]: ";
+				var_dump($res);
+
+				sleep(5);
+
+				echo "\n[CALL]: upnp_unsubscribe()\n";
+				$res = upnp_unsubscribe($subs_id);
+				echo "[RESULT]: ";
+				var_dump($res);
+				*/
+			}
+			else
+			{
+				show_error();
+			}
+			$i++;
+		}
+	}
+}
+
+function ctrl_point_event_recieved($event_data)
+{
+	global $services;
+
+	echo "\n[CALL]: ctrl_point_event_recieved()\n";
+
+	//$xml = new SimpleXMLElement($event_data['changed_variables']);
+	//var_dump($xml);
 	
+	var_dump($services);
+	$res = upnp_send_action($services[1]['control_url'], $services[1]['service_type'], "SetColor", "Color", 6);
+	echo "[RESULT]: ";
+	var_dump($res);
+
 }
 
 function ctrl_point_subscribe_async($url, $time_out)
