@@ -1,9 +1,11 @@
 <?php
 
-global $services;
+global $services, $subscribed;
 $services = array();
+$subscribed = false;
 
 define('TV_DEVICE_TYPE', 'urn:schemas-upnp-org:device:tvdevice:1');
+define('TIME_OUT', 20);
 
 declare(ticks=1);
 pcntl_signal(SIGINT, "ctrl_point_sig_int");
@@ -24,25 +26,19 @@ function ctrl_point_sig_int($signal)
 	exit();
 }
 
-function ctrl_point_callback_event_handler($args, $event_type, $event)
+function ctrl_point_callback_event_handler($args, $event_type, $event_data)
 {
-	//$services = array();
-
-	//$tv_device_type = "urn:schemas-upnp-org:device:tvdevice:1";
-	
 	echo "=========================================================\n";
 	echo "[CALL]: ctrl_point_callback_event_handler() \n";
 	echo "---------------------------------------------------------\n";
 
-	echo "args: ";
-	print_r($args);
+	//echo "args: ";
+	//print_r($args);
 
 	printf("EventType: %s (%d)\n", upnp_get_event_type_name($event_type), $event_type);
-	printf("Event: %s\n", $event);
 	
-	$event_data = upnp_get_resource_data($event, $event_type);
-	echo "event_data: ";
-	print_r($event_data);
+	//echo "event_data: ";
+	//print_r($event_data);
 
 	switch ($event_type)
 	{
@@ -61,149 +57,11 @@ function ctrl_point_callback_event_handler($args, $event_type, $event)
 	echo "=========================================================\n\n\n";
 }
 
-function ctrl_point_callback_event_handler_async($args, $event_type, $event)
-{
-	$subs_id = 0;
-
-	$tv_device_type = "urn:schemas-upnp-org:device:tvdevice:1";
-	
-	echo "=========================================================\n";
-	echo "[CALL]: ctrl_point_callback_event_handler_async() \n";
-	echo "---------------------------------------------------------\n";
-
-	echo "args: ";
-	print_r($args);
-	printf("EventType: %s\n", $event_type);
-	printf("Event: %s\n", $event);
-
-	//$url = parse_url($event);
-
-	$event_data = upnp_get_resource_data($event, $event_type);
-	$location = $event_data['location'];
-	printf("EventLocation: %s\n", $location);
-
-	$url = parse_url($location);
-
-	if ($url['scheme'] != 'http')
-	{
-		echo "=========================================================\n\n\n";
-		return false;
-	}
-
-	$xml = new SimpleXMLElement($location, NULL, TRUE);
-	$event_sub_url = $xml->device->serviceList->service[0]->eventSubURL;
-	printf("deviceType: %s\n", $xml->device->deviceType);
-	printf("eventSubURL: %s\n", $event_sub_url);
-
-	if (($xml->device->deviceType == $tv_device_type) && ($subs_id == 0))
-	{
-		$subsc_url = sprintf('%s://%s:%d%s', $url['scheme'], $url['host'], $url['port'], $event_sub_url);
-		$time_out = 5;
-
-		printf("Subscribing to EventURL %s ...\n", $subsc_url);
-
-		$res = ctrl_point_subscribe_async($subsc_url, $time_out);
-
-		if ($res)
-		{
-			printf("Async subscribing...\n");
-			var_dump($res);
-		}
-		else
-		{
-			show_error();
-		}
-	}	
-		
-	
-	echo "=========================================================\n\n\n";
-}
-
-function ctrl_point_subscribe_callback_event_handler($args, $event_type, $event)
-{
-	//$subs_id = $event;
-
-	echo "=========================================================\n";
-	echo "[CALL]: ctrl_point_subscribe_callback_event_handler() \n";
-	echo "---------------------------------------------------------\n";
-
-	echo "args: ";
-	print_r($args);
-	printf("EventType: %s\n", $event_type);
-	printf("Event: %s\n", $event);
-
-	$event_data = upnp_get_resource_data($event, $event_type);
-	$subs_id = $event_data['sid'];
-
-	if ($subs_id)
-	{
-		printf("Subscribed to EventURL with SID=%s\n", $subs_id);
-		sleep(6);
-
-		echo "\n[CALL]: upnp_renew_subscription_async()\n";
-		$callback = 'ctrl_point_renew_subscribe_callback_event_handler';
-		$args = array('renewsubscribe_async');
-		$time_out = 5;
-		$res = upnp_renew_subscription_async($subs_id, $time_out, $callback, $args);
-		echo "[RESULT]: ";
-		var_dump($res);
-
-		echo "\n[CALL]: upnp_unsubscribe_async()\n";
-		$callback = 'ctrl_point_unsubscribe_callback_event_handler';
-		$args = array('unsubscribe_async');
-		$res = upnp_unsubscribe_async($subs_id, $callback, $args);
-		echo "[RESULT]: ";
-		var_dump($res);
-	}
-	else
-	{
-		show_error();
-	}
-	
-	echo "=========================================================\n\n\n";
-}
-
-function ctrl_point_renew_subscribe_callback_event_handler($args, $event_type, $event)
-{
-	echo "=========================================================\n";
-	echo "[CALL]: ctrl_point_renew_subscribe_callback_event_handler() \n";
-	echo "---------------------------------------------------------\n";
-
-	echo "args: ";
-	print_r($args);
-	printf("EventType: %s\n", $event_type);
-	printf("Event: %s\n", $event);
-
-	$event_data = upnp_get_resource_data($event, $event_type);
-	echo "event_data: ";
-	print_r($event_data);
-
-	echo "=========================================================\n\n\n";
-}
-
-function ctrl_point_unsubscribe_callback_event_handler($args, $event_type, $event)
-{
-	echo "=========================================================\n";
-	echo "[CALL]: ctrl_point_unsubscribe_callback_event_handler() \n";
-	echo "---------------------------------------------------------\n";
-
-	echo "args: ";
-	print_r($args);
-	printf("EventType: %s\n", $event_type);
-	printf("Event: %s\n", $event);
-	
-	$event_data = upnp_get_resource_data($event, $event_type);
-	echo "event_data: ";
-	print_r($event_data);
-
-	echo "=========================================================\n\n\n";
-}
-
 function ctrl_point_subscribe($event_data)
 {
-	echo "\n[CALL]: ctrl_point_subscribe()\n";
-
 	global $services;
+
+	echo "\n[CALL]: ctrl_point_subscribe()\n";
 
 	$location = $event_data['location'];
 	printf("EventLocation: %s\n", $location);
@@ -221,78 +79,244 @@ function ctrl_point_subscribe($event_data)
 	if ($xml->device->deviceType == TV_DEVICE_TYPE)
 	{
 		printf("Found Tv device: \n");
-		
+	
 		$i = 0;
 		foreach ($xml->device->serviceList->service as $key=>$service)
 		{
 			printf("Found service: %s\n", $service->serviceType);
-			$services[$i]['service_type'] = $service->serviceType;
+			if ($services[$i]['subscribed'] == 'yes') {
+				printf("Already subscribed\n");
+				$i++;
+				continue;
+			}
+			if ($services[$i]['subscribed'] == 'in process') {
+				printf("Subscribe in process...\n");
+				$i++;
+				continue;
+			}
 
 			$event_sub_url = $service->eventSubURL;
 			printf("eventSubURL: %s\n", $event_sub_url);
 			$event_control_url = $service->controlURL;
 			printf("controlURL: %s\n", $event_control_url);
-			
-			$time_out = 5;
-			$services[$i]['subsc_url'] = sprintf('%s://%s:%d%s', $url['scheme'], $url['host'], $url['port'], $event_sub_url);
-			$services[$i]['control_url'] = sprintf('%s://%s:%d%s', $url['scheme'], $url['host'], $url['port'], $event_control_url);
+			$service_host = sprintf('%s://%s:%d', $url['scheme'], $url['host'], $url['port']);
+
+			$services[$i]['service_type'] = $service->serviceType;
+			$services[$i]['subsc_url'] = sprintf('%s%s', $service_host, $event_sub_url);
+			$services[$i]['control_url'] = sprintf('%s%s', $service_host, $event_control_url);
 			
 			printf("\nSubscribing to EventURL %s ...\n", $services[$i]['subsc_url']);
-			$services[$i]['subs_id'] = upnp_subscribe($services[$i]['subsc_url'], $time_out);
 
-			if ($services[$i]['subs_id'])
+			if (!($i % 2))
 			{
-				printf("Subscribed to EventURL with SID=%s\n\n", $services[$i]['subs_id']);
-				
-				//sleep(6);
-				/*
-				echo "\n[CALL]: upnp_renew_subscription()\n";
-				$res = upnp_renew_subscription($subs_id, 5);
-				echo "[RESULT]: ";
-				var_dump($res);
+				$services[$i]['subs_id'] = upnp_subscribe($services[$i]['subsc_url'], TIME_OUT);
 
-				sleep(5);
-
-				echo "\n[CALL]: upnp_unsubscribe()\n";
-				$res = upnp_unsubscribe($subs_id);
-				echo "[RESULT]: ";
-				var_dump($res);
-				*/
+				if ($services[$i]['subs_id'])
+				{
+					printf("Subscribed to EventURL with SID=%s\n\n", $services[$i]['subs_id']);
+					$services[$i]['subscribed'] = 'yes';
+				}
+				else
+				{
+					show_error();
+					$services[$i]['subscribed'] = 'no';
+				}
 			}
 			else
 			{
-				show_error();
+				$callback = 'ctrl_point_subscribe_callback_event_handler';
+				$args = array('subscribe_async', 'index' => $i);
+
+				$res = upnp_subscribe_async($services[$i]['subsc_url'], TIME_OUT, $callback, $args);
+
+				if ($res)
+				{
+					printf("Async subscribing...\n");
+					$services[$i]['subscribed'] = 'in process';
+					var_dump($res);
+				}
+				else
+				{
+					$services[$i]['subscribed'] = 'no';
+					show_error();
+				}
 			}
 			$i++;
 		}
 	}
 }
 
+function ctrl_point_subscribe_callback_event_handler($args, $event_type, $event_data)
+{
+	echo "=========================================================\n";
+	echo "[CALL]: ctrl_point_subscribe_callback_event_handler() \n";
+	echo "---------------------------------------------------------\n";
+
+	global $services;
+
+	printf("EventType: %s (%d)\n", upnp_get_event_type_name($event_type), $event_type);
+	
+	echo "event_data: ";
+	print_r($event_data);
+
+	echo "args: ";
+	print_r($args);
+
+	if ($event_data['sid'])
+	{
+		$services[$args['index']]['subs_id'] = $event_data['sid'];
+		$services[$args['index']]['subscribed'] = 'yes';
+		printf("Subscribed to EventURL with SID=%s\n", $event_data['sid']);
+	}
+	else
+	{
+		$services[$args['index']]['subscribed'] = 'no';
+		show_error();
+	}
+	
+	echo "=========================================================\n\n\n";
+}
+
+function ctrl_point_unsubscribe($ind, $async=false)
+{
+	echo "=========================================================\n";
+	echo "[CALL]: ctrl_point_unsubscribe() \n";
+	echo "---------------------------------------------------------\n";
+
+	global $services;
+
+	if ($async) {
+		echo "\n[CALL]: upnp_unsubscribe_async()\n";
+		$callback = 'ctrl_point_unsubscribe_callback_event_handler';
+		$args = array('unsubscribe_async', 'index' => $ind);
+		$res = upnp_unsubscribe_async($services[$ind]['subs_id'], $callback, $args);
+		if ($res)
+		{
+			printf("Async unsubscribing...\n");
+			$services[$i]['subscribed'] = 'in process';
+			var_dump($res);
+		}
+		else
+		{
+			$services[$i]['subscribed'] = 'no';
+			show_error();
+		}
+	} else {
+		echo "\n[CALL]: upnp_unsubscribe()\n";
+
+		$res = upnp_unsubscribe($services[$ind]['subs_id']);
+		if ($res)
+		{
+			printf("Unsubscribed from EventURL with SID=%s\n\n", $services[$ind]['subs_id']);
+			$services[$ind]['subscribed'] = 'no';
+		}
+		else
+		{
+			show_error();
+		}
+	}
+}
+
+function ctrl_point_unsubscribe_callback_event_handler($args, $event_type, $event_data)
+{
+	echo "=========================================================\n";
+	echo "[CALL]: ctrl_point_unsubscribe_callback_event_handler() \n";
+	echo "---------------------------------------------------------\n";
+
+	global $services;
+
+	printf("EventType: %s (%d)\n", upnp_get_event_type_name($event_type), $event_type);
+	
+	echo "event_data: ";
+	print_r($event_data);
+	if ($event_data['err_code'] == 0)
+	{
+		$services[$args['index']]['subscribed'] = 'no';
+		printf("Unsubscribed from EventURL with SID=%s\n\n", $services[$args['index']]['subs_id']);
+	}
+
+	echo "=========================================================\n\n\n";
+}
+
+function ctrl_point_renew_subscription($ind, $async=false)
+{
+	echo "=========================================================\n";
+	echo "[CALL]: ctrl_point_renew_subscription() \n";
+	echo "---------------------------------------------------------\n";
+
+	global $services;
+
+	if ($async) {
+		echo "\n[CALL]: upnp_renew_subscription_async()\n";
+		$callback = 'ctrl_point_renew_subscribe_callback_event_handler';
+		$args = array('renewsubscribe_async', 'index' => $ind);
+		$res = upnp_renew_subscription_async($services[$ind]['subs_id'], TIME_OUT, $callback, $args);
+		if ($res)
+		{
+			printf("Async renew subscription...\n");
+			$services[$i]['subscribed'] = 'in process';
+			var_dump($res);
+		}
+		else
+		{
+			$services[$i]['subscribed'] = 'no';
+			show_error();
+		}
+	} else {
+		echo "\n[CALL]: upnp_renew_subscription()\n";
+
+		$res = upnp_renew_subscription($services[$ind]['subs_id'], TIME_OUT);
+		if ($res)
+		{
+			printf("Renew subscription from EventURL with SID=%s\n\n", $services[$ind]['subs_id']);
+			$services[$ind]['subscribed'] = 'yes';
+		}
+		else
+		{
+			show_error();
+		}
+	}
+}
+
+function ctrl_point_renew_subscribe_callback_event_handler($args, $event_type, $event)
+{
+	echo "=========================================================\n";
+	echo "[CALL]: ctrl_point_renew_subscribe_callback_event_handler() \n";
+	echo "---------------------------------------------------------\n";
+	
+	global $services;
+
+	printf("EventType: %s (%d)\n", upnp_get_event_type_name($event_type), $event_type);
+	
+	echo "event_data: ";
+	print_r($event_data);
+	if ($event_data['err_code'] == 0)
+	{
+		$services[$args['index']]['subscribed'] = 'no';
+		printf("Renew subscription from EventURL with SID=%s\n\n", $services[$args['index']]['subs_id']);
+	}
+
+	echo "=========================================================\n\n\n";
+}
+
 function ctrl_point_event_recieved($event_data)
 {
+	echo "=========================================================\n";
+	echo "[CALL]: ctrl_point_event_recieved() \n";
+	echo "---------------------------------------------------------\n";
+
 	global $services;
 
 	echo "\n[CALL]: ctrl_point_event_recieved()\n";
 
-	//$xml = new SimpleXMLElement($event_data['changed_variables']);
-	//var_dump($xml);
-	
-	var_dump($services);
-	$res = upnp_send_action($services[1]['control_url'], $services[1]['service_type'], "SetColor", "Color", 6);
-	echo "[RESULT]: ";
-	var_dump($res);
-
-}
-
-function ctrl_point_subscribe_async($url, $time_out)
-{
-	$callback = 'ctrl_point_subscribe_callback_event_handler';
-	$args = array('subscribe_async');
-
-	echo "\n[CALL]: upnp_subscribe_async()\n";
-	$res = upnp_subscribe_async($url, $time_out, $callback, $args);
-	return $res;
-	
+	foreach ($services as $key=>$service)
+	{
+		if ($service['subs_id'] == $event_data['sid'])
+		{
+			$services[$key]['changed_variables'] = $event_data['changed_variables'];
+			break;
+		}
+	}
 }
 
 function show_error()
@@ -306,7 +330,6 @@ echo "[CALL]: upnp_register_client() \n";
 echo "---------------------------------------------------------\n";
 
 $callback = 'ctrl_point_callback_event_handler';
-//$callback = 'ctrl_point_callback_event_handler_async';
 $args = array('register_client');
 $res = upnp_register_client($callback, $args);
 echo "[RESULT]: ";
@@ -319,31 +342,17 @@ if (!$res)
 echo "=========================================================\n\n\n";
 /* ########################################################### */
 
+//sleep(10);
 
-/* ########################################################### */
-/*echo "=========================================================\n";
-echo "[CALL]: upnp_search_async() \n";
-echo "---------------------------------------------------------\n";
-
-$tv_device_type = "urn:schemas-upnp-org:device:tvdevice:1";
-$callback = 'ctrl_point_callback_event_handler';
-$args = array('search_async');
-
-$res= upnp_search_async(5, $tv_device_type, $callback, $args);
-echo "[RESULT]: ";
-var_dump($res);
-if (!$res)
-{
-	show_error();
-}
-echo "=========================================================\n\n\n";*/
-/* ########################################################### */
-
-
-
-while(true)
-{
+while(true) {
+	sleep(20);
+	ctrl_point_renew_subscription(0);
+	sleep(5);
+	ctrl_point_unsubscribe(0);
 	sleep(1);
+	ctrl_point_renew_subscription(1, true);
+	sleep(10);
+	ctrl_point_unsubscribe(1, true);
 }
 
 

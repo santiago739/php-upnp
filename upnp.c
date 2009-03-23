@@ -29,23 +29,16 @@
 #include "php_upnp.h"
 
 
-
 ZEND_DECLARE_MODULE_GLOBALS(upnp)
 
 typedef struct _php_upnp_callback_struct { /* {{{ */
     zval *func;
     zval *arg;
-	int rsrc_id;
-	Upnp_EventType event_type;
 } php_upnp_callback_struct;
 /* }}} */
 
-static int le_upnp_discovery;
-static int le_upnp_subscribe;
-static int le_upnp_event;
-
-static int php_upnp_callback_mutex = 1;
-
+ithread_mutex_t DeviceListMutex;
+ithread_mutex_t CallbackMutex;
 
 #ifdef COMPILE_DL_UPNP
 ZEND_GET_MODULE(upnp)
@@ -68,23 +61,7 @@ static void php_upnp_init_globals(zend_upnp_globals *upnp_globals) /* {{{ */
 	upnp_globals->error_code = 0;
 	upnp_globals->initialized = 0;
 }
-
 /* }}} */
-
-/*
-static void php_upnp_callback_event_free(php_upnp_callback_struct *callback) 
-{
-	if (!callback) {
-		return;
-	}
-
-	zval_ptr_dtor(&callback->func);
-	if (callback->arg) {
-		zval_ptr_dtor(&callback->arg);
-	}
-	efree(callback);
-}
-*/
 
 static const char *php_upnp_err2str(int code) /* {{{ */
 {
@@ -198,7 +175,10 @@ static int php_upnp_initialize(const char *ip, unsigned short port) /* {{{ */
 	if (UPNP_G(initialized)) {
 		return UPNP_E_SUCCESS;
 	}
-
+	
+	ithread_mutex_init(&DeviceListMutex, 0);
+	ithread_mutex_init(&CallbackMutex, 0);
+	
 	res = UpnpInit(ip, port);
 	if (res == UPNP_E_SUCCESS) {
 		UPNP_G(initialized) = 1;
@@ -212,6 +192,10 @@ static int php_upnp_terminate(void) /* {{{ */
 	int res;
 
 	if (UPNP_G(initialized)) {
+		if (UPNP_G(ctrlpt_handle) != -1) {
+			UpnpUnRegisterClient(UPNP_G(ctrlpt_handle));
+		}
+		
 		res = UpnpFinish();
 	} else {
 		return UPNP_E_SUCCESS;
@@ -263,51 +247,48 @@ static const char *php_upnp_get_event_type_name(Upnp_EventType EventType) /* {{{
 }
 /* }}} */
 
-static void php_upnp_event_discovery_dtor(zend_rsrc_list_entry *rsrc TSRMLS_DC) /* {{{ */
-{ 
-    struct Upnp_Discovery *d_event = (struct Upnp_Discovery *)rsrc->ptr;
-	
-	efree(d_event); 
-}
-/* }}} */
-
-static void php_upnp_event_subscribe_dtor(zend_rsrc_list_entry *rsrc TSRMLS_DC) /* {{{ */
-{ 
-    struct Upnp_Event_Subscribe *es_event = (struct Upnp_Event_Subscribe *)rsrc->ptr;
-	
-	efree(es_event); 
-}
-/* }}} */
-
-static void php_upnp_event_dtor(zend_rsrc_list_entry *rsrc TSRMLS_DC) /* {{{ */
-{ 
-    struct Upnp_Event *e_event = (struct Upnp_Event *)rsrc->ptr;
-	
-	efree(e_event); 
-}
-/* }}} */
-
 static int php_upnp_callback_event_handler(Upnp_EventType EventType, void *Event, void *Cookie) /* {{{ */
 {
 	zval *args[3];
 	zval retval;
 	php_upnp_callback_struct *callback = (php_upnp_callback_struct *)Cookie;
 	
-	if (!callback || (php_upnp_callback_mutex == 0)) {
+	if (!callback) {
 		return 1;
 	}
 	
-	php_upnp_callback_mutex = 0;
+	ithread_mutex_lock(&CallbackMutex);
+	
+	printf("EventType: %s (%d)\n", php_upnp_get_event_type_name(EventType), EventType);
+	
+	args[0] = callback->arg;
+	args[0]->refcount++;
+		
+	MAKE_STD_ZVAL(args[1]);
+	ZVAL_LONG(args[1], EventType); 
+	
+	MAKE_STD_ZVAL(args[2]);
+	array_init(args[2]); 
 	
 	switch (EventType) {
 		case UPNP_DISCOVERY_ADVERTISEMENT_ALIVE:
 		case UPNP_DISCOVERY_SEARCH_RESULT:
 		case UPNP_DISCOVERY_ADVERTISEMENT_BYEBYE:
 		{
-			struct Upnp_Discovery *d_event, *d_event_copy;
-	
-			d_event = (struct Upnp_Discovery *)Event;
-			UPNP_EVENT_TO_RESOURCE(callback, EventType, d_event, d_event_copy, le_upnp_discovery);
+			struct Upnp_Discovery *d_event = (struct Upnp_Discovery *)Event;
+			
+			if (d_event) {
+				add_assoc_long(args[2], "err_code", d_event->ErrCode);
+				add_assoc_long(args[2], "expires", d_event->Expires);
+				add_assoc_string(args[2], "device_id", d_event->DeviceId, 1); 
+				add_assoc_string(args[2], "device_type", d_event->DeviceType, 1); 
+				add_assoc_string(args[2], "service_type", d_event->ServiceType, 1); 
+				add_assoc_string(args[2], "service_ver", d_event->ServiceVer, 1); 
+				add_assoc_string(args[2], "location", d_event->Location, 1); 
+				add_assoc_string(args[2], "os", d_event->Os, 1); 
+				add_assoc_string(args[2], "date", d_event->Date, 1); 
+				add_assoc_string(args[2], "ext", d_event->Ext, 1); 
+			}
 			
 			break;
 		}
@@ -316,55 +297,44 @@ static int php_upnp_callback_event_handler(Upnp_EventType EventType, void *Event
 		case UPNP_EVENT_UNSUBSCRIBE_COMPLETE:
 		case UPNP_EVENT_RENEWAL_COMPLETE:
 		{
-			struct Upnp_Event_Subscribe *es_event, *es_event_copy;
+			struct Upnp_Event_Subscribe *es_event = (struct Upnp_Event_Subscribe *)Event;
 			
-			es_event = (struct Upnp_Event_Subscribe *)Event;
-			UPNP_EVENT_TO_RESOURCE(callback, EventType, es_event, es_event_copy, le_upnp_subscribe);
+			if (es_event) {
+				add_assoc_long(args[2], "err_code", es_event->ErrCode);
+				add_assoc_string(args[2], "publisher_url", es_event->PublisherUrl, 1); 
+				add_assoc_string(args[2], "sid", es_event->Sid, 1); 
+				add_assoc_long(args[2], "time_out", es_event->TimeOut);
+			}
 			
 			break;
 		}
 			
 		case UPNP_EVENT_RECEIVED:
 		{
-			struct Upnp_Event *e_event, *e_event_copy;
-
-			e_event = (struct Upnp_Event *)Event;
-			UPNP_EVENT_TO_RESOURCE(callback, EventType, e_event, e_event_copy, le_upnp_event);
+			struct Upnp_Event *e_event = (struct Upnp_Event *)Event;
+			
+			if (e_event) {
+				add_assoc_long(args[2], "event_key", e_event->EventKey);
+				add_assoc_string(args[2], "sid", e_event->Sid, 1); 
+				add_assoc_string(args[2], "changed_variables", ixmlDocumenttoString(e_event->ChangedVariables), 1);
+			}
 			
 			break;
 		}
 		
 		default:
-		{
-			callback->rsrc_id = -1;
-			callback->event_type = -1;
 			break;
-		}
 	}
 	
-	if (callback->rsrc_id > 0)
-	{
-		args[0] = callback->arg;
-		args[0]->refcount++;
-		
-		MAKE_STD_ZVAL(args[1]);
-		ZVAL_LONG(args[1], EventType); 
-		
-		MAKE_STD_ZVAL(args[2]);
-		ZVAL_RESOURCE(args[2], callback->rsrc_id);
-		zend_list_addref(callback->rsrc_id);
-	
-	
-		if (call_user_function(EG(function_table), NULL, callback->func, &retval, 3, args TSRMLS_CC) == SUCCESS) {
-			zval_dtor(&retval);
-		}
-		
-		zval_ptr_dtor(&(args[0]));
-		zval_ptr_dtor(&(args[1])); 
-		zval_ptr_dtor(&(args[2]));
+	if (call_user_function(EG(function_table), NULL, callback->func, &retval, 3, args TSRMLS_CC) == SUCCESS) {
+		zval_dtor(&retval);
 	}
+	
+	zval_ptr_dtor(&(args[0]));
+	zval_ptr_dtor(&(args[1])); 
+	zval_ptr_dtor(&(args[2]));
 		
-	php_upnp_callback_mutex = 1;
+	ithread_mutex_unlock(&CallbackMutex);
 	
 	return 0;
 }
@@ -382,18 +352,6 @@ PHP_MINIT_FUNCTION(upnp)
 		php_upnp_initialize(UPNP_G(ip), UPNP_G(port));
 	}
 	
-	le_upnp_discovery = zend_register_list_destructors_ex(
-							php_upnp_event_discovery_dtor, NULL, UPNP_EVENT_RES_NAME, 
-							module_number);
-	
-	le_upnp_subscribe = zend_register_list_destructors_ex(
-							php_upnp_event_subscribe_dtor, NULL, UPNP_EVENT_RES_NAME, 
-							module_number);
-	
-	le_upnp_event = zend_register_list_destructors_ex(
-							php_upnp_event_dtor, NULL, UPNP_EVENT_RES_NAME, 
-							module_number);
-	
 	return SUCCESS;
 }
 /* }}} */
@@ -405,7 +363,6 @@ PHP_MSHUTDOWN_FUNCTION(upnp)
 	/* shut it down if initialized */
 	if (UPNP_G(enabled)) {
 		php_upnp_terminate();
-		//php_upnp_callback_event_free();
 	}
 
 	UNREGISTER_INI_ENTRIES();
@@ -446,12 +403,18 @@ PHP_FUNCTION(upnp_get_event_type_name)
 {
 	long event_type;
 	char* event_type_name = NULL;
+	
+	//ithread_mutex_lock(&DeviceListMutex);
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "l", &event_type) == FAILURE) {
+		//ithread_mutex_unlock(&DeviceListMutex);
 		return;
 	}
 	
 	event_type_name = estrdup(php_upnp_get_event_type_name((Upnp_EventType)event_type));
+	
+	//ithread_mutex_unlock(&DeviceListMutex);
+	
 	RETURN_STRING(event_type_name, 0);
 }
 /* }}} */
@@ -530,10 +493,9 @@ PHP_FUNCTION(upnp_register_client)
 	}
 
 	callback = emalloc(sizeof(php_upnp_callback_struct));
+	
 	callback->func = zcallback;
 	callback->arg = zarg;
-	callback->rsrc_id = -1;
-	callback->event_type = -1;
 	
 	UPNP_G(error_code) = UpnpRegisterClient(php_upnp_callback_event_handler,
 							callback, &UPNP_G(ctrlpt_handle));
@@ -554,10 +516,6 @@ PHP_FUNCTION(upnp_unregister_client)
 		return;
 	}
 
-	if (!UPNP_G(initialized)) {
-		RETURN_FALSE;
-	}
-	
 	if (UPNP_G(ctrlpt_handle) == -1) {
 		RETURN_FALSE;
 	}
@@ -575,385 +533,31 @@ PHP_FUNCTION(upnp_unregister_client)
 /* }}} */
 
 /* {{{ */
-PHP_FUNCTION(upnp_register_root_device)
-{
-	zval *zcallback, *zarg;
-	char *callback_name, *desc_url;
-	int desc_url_len;
-	php_upnp_callback_struct *callback;
-	
-	if (!UPNP_G(initialized)) {
-		RETURN_FALSE;
-	}
-	
-	if ((UPNP_G(ctrlpt_handle) != -1) || (UPNP_G(device_handle) != -1)) {
-		RETURN_FALSE;
-	}
-	
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "szz", &desc_url, &desc_url_len, &zcallback, &zarg) == FAILURE) {
-		return;
-	}
-	
-	if (!zend_is_callable(zcallback, 0, &callback_name)) {
-		php_error_docref(NULL TSRMLS_CC, E_WARNING, "'%s' is not a valid callback", callback_name);
-		efree(callback_name);
-		RETURN_FALSE;
-	}
-	efree(callback_name); 
-
-	zval_add_ref(&zcallback);
-	if (zarg) {
-		zval_add_ref(&zarg);
-	} else {
-		ALLOC_INIT_ZVAL(zarg);
-	}
-	
-	callback = emalloc(sizeof(php_upnp_callback_struct));
-	callback->func = zcallback;
-	callback->arg = zarg;
-
-	UPNP_G(error_code) = UpnpRegisterRootDevice(desc_url, php_upnp_callback_event_handler,
-							callback, &UPNP_G(device_handle));
-	
-	if (UPNP_G(error_code) != UPNP_E_SUCCESS) {
-		php_error_docref(NULL TSRMLS_CC, E_WARNING, "Error registering the rootdevice: %d", UPNP_G(error_code));
-		RETURN_FALSE;
-	}
-
-	RETURN_TRUE;
-}
-/* }}} */
-
-/* {{{ */
-PHP_FUNCTION(upnp_register_root_device_ext)
-{
-	zval *zcallback, *zarg;
-	char *callback_name, *desc;
-	int desc_len, config_base_url;
-	long desc_type, buffer_len = 0;
-	Upnp_DescType upnp_desc_type;
-	php_upnp_callback_struct *callback;
-	
-	if (!UPNP_G(initialized)) {
-		RETURN_FALSE;
-	}
-	
-	if ((UPNP_G(ctrlpt_handle) != -1) || (UPNP_G(device_handle) != -1)) {
-		RETURN_FALSE;
-	}
-	
-	
-	
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "szz|l", &desc, &desc_len, &zcallback, &zarg, &desc_type) == FAILURE) {
-		return;
-	}
-	
-	if (!zend_is_callable(zcallback, 0, &callback_name)) {
-		php_error_docref(NULL TSRMLS_CC, E_WARNING, "'%s' is not a valid callback", callback_name);
-		efree(callback_name);
-		RETURN_FALSE;
-	}
-	efree(callback_name); 
-
-	zval_add_ref(&zcallback);
-	if (zarg) {
-		zval_add_ref(&zarg);
-	} else {
-		ALLOC_INIT_ZVAL(zarg);
-	}
-	
-	callback = emalloc(sizeof(php_upnp_callback_struct));
-	callback->func = zcallback;
-	callback->arg = zarg;
-	
-	/* TODO: add checkup for internal webserver which MUST be enabled, except desc_type=1  */
-	
-	switch (desc_type) {
-		case 1:
-			upnp_desc_type = UPNPREG_URL_DESC;
-			config_base_url = 0;
-			break;
-		case 2:
-			upnp_desc_type = UPNPREG_FILENAME_DESC;
-			config_base_url = 1;
-			break;
-		case 3:
-			upnp_desc_type = UPNPREG_BUF_DESC;
-			buffer_len = desc_len;
-			config_base_url = 1;
-			break;
-		default:
-			upnp_desc_type = UPNPREG_URL_DESC;
-			config_base_url = 0;
-	}
-
-	UPNP_G(error_code) = UpnpRegisterRootDevice2(upnp_desc_type, desc, 
-							buffer_len, config_base_url, 
-							php_upnp_callback_event_handler,
-							callback, &UPNP_G(device_handle));
-	
-	if (UPNP_G(error_code) != UPNP_E_SUCCESS) {
-		php_error_docref(NULL TSRMLS_CC, E_WARNING, "Error registering the rootdevice: %s (error code: %d)", 
-						 php_upnp_err2str(UPNP_G(error_code)), UPNP_G(error_code));
-		RETURN_FALSE;
-	}
-
-	RETURN_TRUE;
-}
-/* }}} */
-
-/* {{{ */
-PHP_FUNCTION(upnp_unregister_root_device)
-{
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "") == FAILURE) {
-		return;
-	}
-
-	if (!UPNP_G(initialized)) {
-		RETURN_FALSE;
-	}
-	
-	if (UPNP_G(device_handle) == -1) {
-		RETURN_FALSE;
-	}
-
-	UPNP_G(error_code) = UpnpUnRegisterRootDevice(UPNP_G(device_handle));
-
-	if (UPNP_G(error_code) != UPNP_E_SUCCESS) {
-		RETURN_FALSE;
-	}
-	
-	UPNP_G(device_handle) = -1;
-	
-	RETURN_TRUE;
-}
-/* }}} */
-
-/* {{{ */
-PHP_FUNCTION(upnp_set_max_content_length)
-{
-	long length;
-
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "l", &length) == FAILURE) {
-		return;
-	}
-
-	UPNP_G(error_code) = UpnpSetMaxContentLength(length);
-	
-	if (UPNP_G(error_code) != UPNP_E_SUCCESS) {
-		RETURN_FALSE;
-	}
-	RETURN_TRUE;
-}
-/* }}} */
-
-/* {{{ */
-PHP_FUNCTION(upnp_search_async)
-{
-	char *target = NULL;
-	int time_mx, target_len;
-	zval *zcallback, *zarg;
-	char *callback_name;
-	php_upnp_callback_struct *callback;
-	
-	if (UPNP_G(ctrlpt_handle) == -1) {
-		RETURN_FALSE;
-	}
-
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "lszz", &time_mx, &target, &target_len, &zcallback, &zarg) == FAILURE) {
-  		return;
-  	}
-	
-	if (!zend_is_callable(zcallback, 0, &callback_name)) {
-		php_error_docref(NULL TSRMLS_CC, E_WARNING, "'%s' is not a valid callback", callback_name);
-		efree(callback_name);
-		RETURN_FALSE;
-	}
-	efree(callback_name); 
-	
-	
-	zval_add_ref(&zcallback);
-	if (zarg) {
-		zval_add_ref(&zarg);
-	} else {
-		ALLOC_INIT_ZVAL(zarg);
-	}
-
-	callback = emalloc(sizeof(php_upnp_callback_struct));
-	callback->func = zcallback;
-	callback->arg = zarg;
-	callback->rsrc_id = -1;
-	callback->event_type = -1;
-	
-	UPNP_G(error_code) = UpnpSearchAsync(UPNP_G(ctrlpt_handle), time_mx, target, callback);
-	
-	if (UPNP_G(error_code) != UPNP_E_SUCCESS) {
-		RETURN_FALSE;
-	}
-	
-	RETURN_TRUE;
-}
-/* }}} */
-
-/* {{{ */
-PHP_FUNCTION(upnp_send_advertisement)
-{
-	long exp;
-	
-	if (UPNP_G(device_handle) == -1) {
-		RETURN_FALSE;
-	}
-
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "l", &exp) == FAILURE) {
-		return;
-	}
-
-	UPNP_G(error_code) = UpnpSendAdvertisement(UPNP_G(device_handle), exp);
-	
-	if (UPNP_G(error_code) != UPNP_E_SUCCESS) {
-		RETURN_FALSE;
-	}
-	RETURN_TRUE;
-}
-/* }}} */
-
-/* {{{ */
-PHP_FUNCTION(upnp_renew_subscription)
-{
-	char *subs_id;
-	int subs_id_len, time_out;
-	
-	if (UPNP_G(ctrlpt_handle) == -1) {
-		RETURN_FALSE;
-	}
-
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sl", &subs_id, &subs_id_len, &time_out) == FAILURE) {
-		return;
-	}
-
-	UPNP_G(error_code) = UpnpRenewSubscription(UPNP_G(ctrlpt_handle), &time_out, subs_id);
-	
-	if (UPNP_G(error_code) != UPNP_E_SUCCESS) {
-		RETURN_FALSE;
-	}
-	
-	RETURN_TRUE;
-}
-/* }}} */
-
-/* {{{ */
-PHP_FUNCTION(upnp_renew_subscription_async)
-{
-	char *subs_id, *callback_name;
-	int subs_id_len, time_out;
-	zval *zcallback, *zarg;
-	php_upnp_callback_struct *callback;
-	
-	if (UPNP_G(ctrlpt_handle) == -1) {
-		RETURN_FALSE;
-	}
-
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "slzz", &subs_id, &subs_id_len, &time_out, &zcallback, &zarg) == FAILURE) {
-		return;
-	}
-	
-	if (!zend_is_callable(zcallback, 0, &callback_name)) {
-		php_error_docref(NULL TSRMLS_CC, E_WARNING, "'%s' is not a valid callback", callback_name);
-		efree(callback_name);
-		RETURN_FALSE;
-	}
-	efree(callback_name); 
-	
-	zval_add_ref(&zcallback);
-	if (zarg) {
-		zval_add_ref(&zarg);
-	} else {
-		ALLOC_INIT_ZVAL(zarg);
-	}
-
-	callback = emalloc(sizeof(php_upnp_callback_struct));
-	callback->func = zcallback;
-	callback->arg = zarg;
-	callback->rsrc_id = -1;
-	callback->event_type = -1;
-
-	UPNP_G(error_code) = UpnpRenewSubscriptionAsync(UPNP_G(ctrlpt_handle), time_out, subs_id,
-							php_upnp_callback_event_handler, callback);
-	
-	if (UPNP_G(error_code) != UPNP_E_SUCCESS) {
-		RETURN_FALSE;
-	}
-	
-	RETURN_TRUE;
-}
-/* }}} */
-
-/* {{{ */
-PHP_FUNCTION(upnp_set_max_subscriptions)
-{
-	int max_subsc;
-	
-	if (UPNP_G(device_handle) == -1) {
-		RETURN_FALSE;
-	}
-	
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "l", &max_subsc) == FAILURE) {
-		return;
-	}
-
-	UPNP_G(error_code) =  UpnpSetMaxSubscriptions(UPNP_G(device_handle), max_subsc);
-
-	if (UPNP_G(error_code) != UPNP_E_SUCCESS) {
-		RETURN_FALSE;
-	}
-	
-	RETURN_TRUE;
-}
-/* }}} */
-
-/* {{{ */
-PHP_FUNCTION(upnp_set_max_subscription_timeout)
-{
-	int max_time_out;
-	
-	if (UPNP_G(device_handle) == -1) {
-		RETURN_FALSE;
-	}
-	
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "l", &max_time_out) == FAILURE) {
-		return;
-	}
-
-	UPNP_G(error_code) =  UpnpSetMaxSubscriptionTimeOut(UPNP_G(device_handle), max_time_out);
-
-	if (UPNP_G(error_code) != UPNP_E_SUCCESS) {
-		RETURN_FALSE;
-	}
-	
-	RETURN_TRUE;
-}
-/* }}} */
-
-/* {{{ */
 PHP_FUNCTION(upnp_subscribe)
 {
 	char *url;
 	int url_len, time_out;
 	Upnp_SID subs_id;
 	
+	ithread_mutex_lock(&DeviceListMutex);
+	
 	if (UPNP_G(ctrlpt_handle) == -1) {
+		ithread_mutex_unlock(&DeviceListMutex);
 		RETURN_FALSE;
 	}
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sl", &url, &url_len, &time_out) == FAILURE) {
+		ithread_mutex_unlock(&DeviceListMutex);
 		return;
 	}
 
 	UPNP_G(error_code) = UpnpSubscribe(UPNP_G(ctrlpt_handle), url, &time_out, subs_id);
 	
 	if (UPNP_G(error_code) != UPNP_E_SUCCESS) {
+		ithread_mutex_unlock(&DeviceListMutex);
 		RETURN_FALSE;
 	}
+	ithread_mutex_unlock(&DeviceListMutex);
 	
 	RETURN_STRING(subs_id, 1);
 }
@@ -967,17 +571,22 @@ PHP_FUNCTION(upnp_subscribe_async)
 	zval *zcallback, *zarg;
 	php_upnp_callback_struct *callback;
 	
+	ithread_mutex_lock(&DeviceListMutex);
+	
 	if (UPNP_G(ctrlpt_handle) == -1) {
+		ithread_mutex_unlock(&DeviceListMutex);
 		RETURN_FALSE;
 	}
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "slzz", &url, &url_len, &time_out, &zcallback, &zarg) == FAILURE) {
+		ithread_mutex_unlock(&DeviceListMutex);
 		return;
 	}
 
 	if (!zend_is_callable(zcallback, 0, &callback_name)) {
 		php_error_docref(NULL TSRMLS_CC, E_WARNING, "'%s' is not a valid callback", callback_name);
 		efree(callback_name);
+		ithread_mutex_unlock(&DeviceListMutex);
 		RETURN_FALSE;
 	}
 	efree(callback_name); 
@@ -992,17 +601,100 @@ PHP_FUNCTION(upnp_subscribe_async)
 	callback = emalloc(sizeof(php_upnp_callback_struct));
 	callback->func = zcallback;
 	callback->arg = zarg;
-	callback->rsrc_id = -1;
-	callback->event_type = -1;
-	
 	
 	UPNP_G(error_code) = UpnpSubscribeAsync(UPNP_G(ctrlpt_handle), 
 							url, time_out, php_upnp_callback_event_handler,
 							callback);
 	
 	if (UPNP_G(error_code) != UPNP_E_SUCCESS) {
+		ithread_mutex_unlock(&DeviceListMutex);
 		RETURN_FALSE;
 	}
+	ithread_mutex_unlock(&DeviceListMutex);
+	
+	RETURN_TRUE;
+}
+/* }}} */
+
+/* {{{ */
+PHP_FUNCTION(upnp_renew_subscription)
+{
+	char *subs_id;
+	int subs_id_len, time_out;
+	
+	ithread_mutex_lock(&DeviceListMutex);
+	
+	if (UPNP_G(ctrlpt_handle) == -1) {
+		ithread_mutex_unlock(&DeviceListMutex);
+		RETURN_FALSE;
+	}
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sl", &subs_id, &subs_id_len, &time_out) == FAILURE) {
+		ithread_mutex_unlock(&DeviceListMutex);
+		return;
+	}
+
+	UPNP_G(error_code) = UpnpRenewSubscription(UPNP_G(ctrlpt_handle), &time_out, subs_id);
+	
+	if (UPNP_G(error_code) != UPNP_E_SUCCESS) {
+		ithread_mutex_unlock(&DeviceListMutex);
+		RETURN_FALSE;
+	}
+	
+	ithread_mutex_unlock(&DeviceListMutex);
+	
+	RETURN_TRUE;
+}
+/* }}} */
+
+/* {{{ */
+PHP_FUNCTION(upnp_renew_subscription_async)
+{
+	char *subs_id, *callback_name;
+	int subs_id_len, time_out;
+	zval *zcallback, *zarg;
+	php_upnp_callback_struct *callback;
+	
+	ithread_mutex_lock(&DeviceListMutex);
+	
+	if (UPNP_G(ctrlpt_handle) == -1) {
+		ithread_mutex_unlock(&DeviceListMutex);
+		RETURN_FALSE;
+	}
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "slzz", &subs_id, &subs_id_len, &time_out, &zcallback, &zarg) == FAILURE) {
+		ithread_mutex_unlock(&DeviceListMutex);
+		return;
+	}
+	
+	if (!zend_is_callable(zcallback, 0, &callback_name)) {
+		php_error_docref(NULL TSRMLS_CC, E_WARNING, "'%s' is not a valid callback", callback_name);
+		efree(callback_name);
+		ithread_mutex_unlock(&DeviceListMutex);
+		RETURN_FALSE;
+	}
+	efree(callback_name); 
+	
+	zval_add_ref(&zcallback);
+	if (zarg) {
+		zval_add_ref(&zarg);
+	} else {
+		ALLOC_INIT_ZVAL(zarg);
+	}
+
+	callback = emalloc(sizeof(php_upnp_callback_struct));
+	callback->func = zcallback;
+	callback->arg = zarg;
+
+	UPNP_G(error_code) = UpnpRenewSubscriptionAsync(UPNP_G(ctrlpt_handle), time_out, subs_id,
+							php_upnp_callback_event_handler, callback);
+	
+	if (UPNP_G(error_code) != UPNP_E_SUCCESS) {
+		ithread_mutex_unlock(&DeviceListMutex);
+		RETURN_FALSE;
+	}
+	
+	ithread_mutex_unlock(&DeviceListMutex);
 	
 	RETURN_TRUE;
 }
@@ -1014,19 +706,25 @@ PHP_FUNCTION(upnp_unsubscribe)
 	char *subs_id;
 	int subs_id_len;
 	
+	ithread_mutex_lock(&DeviceListMutex);
+	
 	if (UPNP_G(ctrlpt_handle) == -1) {
+		ithread_mutex_unlock(&DeviceListMutex);
 		RETURN_FALSE;
 	}
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &subs_id, &subs_id_len) == FAILURE) {
+		ithread_mutex_unlock(&DeviceListMutex);
 		return;
 	}
 
 	UPNP_G(error_code) = UpnpUnSubscribe(UPNP_G(ctrlpt_handle), subs_id);
 	
 	if (UPNP_G(error_code) != UPNP_E_SUCCESS) {
+		ithread_mutex_unlock(&DeviceListMutex);
 		RETURN_FALSE;
 	}
+	ithread_mutex_unlock(&DeviceListMutex);
 	
 	RETURN_TRUE;
 }
@@ -1040,17 +738,22 @@ PHP_FUNCTION(upnp_unsubscribe_async)
 	zval *zcallback, *zarg;
 	php_upnp_callback_struct *callback;
 	
+	ithread_mutex_lock(&DeviceListMutex);
+	
 	if (UPNP_G(ctrlpt_handle) == -1) {
+		ithread_mutex_unlock(&DeviceListMutex);
 		RETURN_FALSE;
 	}
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "szz", &subs_id, &subs_id_len, &zcallback, &zarg) == FAILURE) {
+		ithread_mutex_unlock(&DeviceListMutex);
 		return;
 	}
 
 	if (!zend_is_callable(zcallback, 0, &callback_name)) {
 		php_error_docref(NULL TSRMLS_CC, E_WARNING, "'%s' is not a valid callback", callback_name);
 		efree(callback_name);
+		ithread_mutex_unlock(&DeviceListMutex);
 		RETURN_FALSE;
 	}
 	efree(callback_name); 
@@ -1065,160 +768,18 @@ PHP_FUNCTION(upnp_unsubscribe_async)
 	callback = emalloc(sizeof(php_upnp_callback_struct));
 	callback->func = zcallback;
 	callback->arg = zarg;
-	callback->rsrc_id = -1;
-	callback->event_type = -1;
 	
 	UPNP_G(error_code) = UpnpUnSubscribeAsync(UPNP_G(ctrlpt_handle), 
 							subs_id, php_upnp_callback_event_handler, callback);
 	
 	if (UPNP_G(error_code) != UPNP_E_SUCCESS) {
+		ithread_mutex_unlock(&DeviceListMutex);
 		RETURN_FALSE;
 	}
+	
+	ithread_mutex_unlock(&DeviceListMutex);
 	
 	RETURN_TRUE;
-}
-/* }}} */
-
-/* {{{ */
-PHP_FUNCTION(upnp_send_action)
-{
-	char *action_url, *service_type, *action_name, *param_name, *param_val;
-	int action_url_len, service_type_len, action_name_len, param_name_len, param_val_len;
-	IXML_Document *action_node = NULL, *resp_node = NULL;
-	
-	if (UPNP_G(ctrlpt_handle) == -1) {
-		RETURN_FALSE;
-	}
-	
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "sssss", 
-		&action_url, &action_url_len, &service_type, &service_type_len, 
-		&action_name, &action_name_len, &param_name, &param_name_len, 
-		&param_val, &param_val_len) == FAILURE) {
-		return;
-	}
-	
-	if (UpnpAddToAction(&action_node, action_name, service_type, param_name, param_val) != UPNP_E_SUCCESS ) {
-		RETURN_FALSE;
-	}
-	
-	if (action_node) {
-		UPNP_G(error_code) = UpnpSendAction(UPNP_G(ctrlpt_handle), action_url, 
-								service_type, NULL, action_node, &resp_node);
-        ixmlDocument_free(action_node);
-		
-		if (UPNP_G(error_code) == UPNP_E_SUCCESS) {
-			RETURN_STRING(ixmlDocumenttoString(resp_node), 1);
-		}
-	}
-	
-	RETURN_FALSE;
-}
-
-/* {{{ */
-PHP_FUNCTION(upnp_set_webserver_rootdir)
-{
-	char *root_dir;
-	int root_dir_len;
-
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &root_dir, &root_dir_len) == FAILURE) {
-		return;
-	}
-
-	UPNP_G(error_code) = UpnpSetWebServerRootDir(root_dir);
-	
-	if (UPNP_G(error_code) != UPNP_E_SUCCESS) {
-		RETURN_FALSE;
-	}
-	RETURN_TRUE;
-}
-/* }}} */
-
-/* {{{ */
-PHP_FUNCTION(upnp_get_resource_data)
-{
-	int event_type;
-	zval *event;
-	
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "rl", &event, &event_type) == FAILURE) {
-		return;
-	}
-	
-	switch (event_type) {
-		case UPNP_DISCOVERY_ADVERTISEMENT_BYEBYE:
-		case UPNP_DISCOVERY_ADVERTISEMENT_ALIVE:
-		case UPNP_DISCOVERY_SEARCH_RESULT:
-		{
-			struct Upnp_Discovery *d_event;
-			
-			ZEND_FETCH_RESOURCE(d_event, struct Upnp_Discovery *, &event, -1, 
-								UPNP_EVENT_RES_NAME, le_upnp_discovery); 
-			
-			if (d_event) {
-				array_init(return_value); 
-				add_assoc_long(return_value, "err_code", d_event->ErrCode);
-				add_assoc_long(return_value, "expires", d_event->Expires);
-				add_assoc_string(return_value, "device_id", d_event->DeviceId, 1); 
-				add_assoc_string(return_value, "device_type", d_event->DeviceType, 1); 
-				add_assoc_string(return_value, "service_type", d_event->ServiceType, 1); 
-				add_assoc_string(return_value, "service_ver", d_event->ServiceVer, 1); 
-				add_assoc_string(return_value, "location", d_event->Location, 1); 
-				add_assoc_string(return_value, "os", d_event->Os, 1); 
-				add_assoc_string(return_value, "date", d_event->Date, 1); 
-				add_assoc_string(return_value, "ext", d_event->Ext, 1); 
-				
-				return; 
-			}
-			
-			break;
-		}
-			
-		case UPNP_EVENT_SUBSCRIBE_COMPLETE:
-		case UPNP_EVENT_UNSUBSCRIBE_COMPLETE:
-		case UPNP_EVENT_RENEWAL_COMPLETE:
-		{
-			struct Upnp_Event_Subscribe *es_event;
-			
-			ZEND_FETCH_RESOURCE(es_event, struct Upnp_Event_Subscribe *, &event, -1, 
-								UPNP_EVENT_RES_NAME, le_upnp_subscribe); 
-			
-			if (es_event) {
-				array_init(return_value); 
-				add_assoc_long(return_value, "err_code", es_event->ErrCode);
-				add_assoc_string(return_value, "publisher_url", es_event->PublisherUrl, 1); 
-				add_assoc_string(return_value, "sid", es_event->Sid, 1); 
-				add_assoc_long(return_value, "time_out", es_event->TimeOut);
-				
-				return; 
-			}
-			
-			break;
-		}
-			
-		case UPNP_EVENT_RECEIVED:
-		{
-			struct Upnp_Event *e_event;
-			
-			ZEND_FETCH_RESOURCE(e_event, struct Upnp_Event *, &event, -1, 
-								UPNP_EVENT_RES_NAME, le_upnp_event); 
-			
-			if (e_event) {
-				array_init(return_value); 
-				add_assoc_long(return_value, "event_key", e_event->EventKey);
-				add_assoc_string(return_value, "sid", e_event->Sid, 1); 
-				add_assoc_string(return_value, "changed_variables", ixmlDocumenttoString(e_event->ChangedVariables), 1);
-				
-				return; 
-			}
-			
-			break;
-		}
-			
-		default:
-			return;
-	}
-	
-	
-	RETURN_FALSE;
 }
 /* }}} */
 
@@ -1232,23 +793,12 @@ const zend_function_entry upnp_functions[] = {
 	PHP_FE(upnp_get_server_ip_address, NULL)
 	PHP_FE(upnp_register_client, NULL)
 	PHP_FE(upnp_unregister_client, NULL)
-	PHP_FE(upnp_register_root_device, NULL)
-	PHP_FE(upnp_register_root_device_ext, NULL)	
-	PHP_FE(upnp_unregister_root_device, NULL)
-	PHP_FE(upnp_set_max_content_length, NULL)
-	PHP_FE(upnp_search_async, NULL)
-	PHP_FE(upnp_send_advertisement, NULL)
-	PHP_FE(upnp_set_max_subscriptions, NULL)
-	PHP_FE(upnp_set_max_subscription_timeout, NULL)
-	PHP_FE(upnp_renew_subscription, NULL)
-	PHP_FE(upnp_renew_subscription_async, NULL)
 	PHP_FE(upnp_subscribe, NULL)
 	PHP_FE(upnp_subscribe_async, NULL)
+	PHP_FE(upnp_renew_subscription, NULL)
+	PHP_FE(upnp_renew_subscription_async, NULL)
 	PHP_FE(upnp_unsubscribe, NULL)
 	PHP_FE(upnp_unsubscribe_async, NULL)
-	PHP_FE(upnp_send_action, NULL)	
-	PHP_FE(upnp_set_webserver_rootdir, NULL)
-	PHP_FE(upnp_get_resource_data, NULL)
 	{NULL, NULL, NULL}
 };
 /* }}} */
