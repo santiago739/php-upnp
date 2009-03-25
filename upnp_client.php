@@ -106,6 +106,7 @@ function ctrl_point_subscribe($event_data)
 			$services[$i]['control_url'] = sprintf('%s%s', $service_host, $event_control_url);
 			
 			printf("\nSubscribing to EventURL %s ...\n", $services[$i]['subsc_url']);
+			//sleep(2); // ctrl-c -> segfault 
 
 			if (!($i % 2))
 			{
@@ -278,7 +279,7 @@ function ctrl_point_renew_subscription($ind, $async=false)
 	}
 }
 
-function ctrl_point_renew_subscribe_callback_event_handler($args, $event_type, $event)
+function ctrl_point_renew_subscribe_callback_event_handler($args, $event_type, $event_data)
 {
 	echo "=========================================================\n";
 	echo "[CALL]: ctrl_point_renew_subscribe_callback_event_handler() \n";
@@ -307,7 +308,8 @@ function ctrl_point_event_recieved($event_data)
 
 	global $services;
 
-	echo "\n[CALL]: ctrl_point_event_recieved()\n";
+	echo "event_data: ";
+	print_r($event_data);
 
 	foreach ($services as $key=>$service)
 	{
@@ -317,6 +319,94 @@ function ctrl_point_event_recieved($event_data)
 			break;
 		}
 	}
+	echo "=========================================================\n\n\n";
+}
+
+function ctrl_point_get_var_status($ind, $param_name, $async=false)
+{
+	echo "=========================================================\n";
+	echo "[CALL]: ctrl_point_get_var_status() \n";
+	echo "---------------------------------------------------------\n";
+
+	global $services;
+
+	if ($async) {
+		echo "\n[CALL]: upnp_get_service_var_status_async()\n";
+		$callback = 'ctrl_point_get_service_var_status_callback_event_handler';
+		$args = array('get_service_var_status_async', 'index' => $ind);
+		$res = upnp_get_service_var_status_async($services[$ind]['control_url'], $param_name, $callback, $args);
+		if ($res)
+		{
+			printf("Async get service var status...\n");
+			var_dump($res);
+		}
+		else
+		{
+			show_error();
+		}
+	} else {
+		echo "\n[CALL]: upnp_get_service_var_status()\n";
+
+		$res = upnp_get_service_var_status($services[$ind]['control_url'], $param_name);
+	
+		if ($res)
+		{
+			echo "[RESULT]: ";
+			var_dump($res);
+		}
+		else
+		{
+			show_error();
+		}
+	}
+
+	echo "=========================================================\n\n\n";
+}
+
+function ctrl_point_get_service_var_status_callback_event_handler($args, $event_type, $event_data)
+{
+	echo "=========================================================\n";
+	echo "[CALL]: ctrl_point_get_service_var_status_callback_event_handler() \n";
+	echo "---------------------------------------------------------\n";
+	
+	global $services;
+
+	printf("EventType: %s (%d)\n", upnp_get_event_type_name($event_type), $event_type);
+	
+	echo "event_data: ";
+	print_r($event_data);
+	/*
+	if ($event_data['err_code'] == 0)
+	{
+		$services[$args['index']]['subscribed'] = 'no';
+		printf("Renew subscription from EventURL with SID=%s\n\n", $services[$args['index']]['subs_id']);
+	}
+	*/
+
+	echo "=========================================================\n\n\n";
+}
+
+function ctrl_point_send_action($i, $action_name, $param_name, $param_val)
+{
+	echo "=========================================================\n";
+	echo "[CALL]: ctrl_point_send_action() \n";
+	echo "---------------------------------------------------------\n";
+
+	global $services;
+
+	$res = upnp_send_action($services[$i]['control_url'], $services[$i]['service_type'], $action_name, $param_name, $param_val);
+	
+	if ($res)
+	{
+		echo "[RESULT]: ";
+		var_dump($res);
+	}
+	else
+	{
+		show_error();
+	}
+
+	echo "=========================================================\n\n\n";
 }
 
 function show_error()
@@ -342,15 +432,37 @@ if (!$res)
 echo "=========================================================\n\n\n";
 /* ########################################################### */
 
+/* ########################################################### */
+echo "=========================================================\n";
+echo "[CALL]: upnp_search_async() \n";
+echo "---------------------------------------------------------\n";
+
+$callback = 'ctrl_point_callback_event_handler';
+$args = array('search_async');
+
+$res= upnp_search_async(20, TV_DEVICE_TYPE, $callback, $args);
+echo "[RESULT]: ";
+var_dump($res);
+if (!$res)
+{
+	show_error();
+}
+echo "=========================================================\n\n\n";
+/* ########################################################### */
+
 //sleep(10);
 
 while(true) {
 	sleep(20);
 	ctrl_point_renew_subscription(0);
+	ctrl_point_send_action(0, "SetVolume", "Volume", 6);
+	ctrl_point_get_var_status(0, "Power");
 	sleep(5);
 	ctrl_point_unsubscribe(0);
 	sleep(1);
 	ctrl_point_renew_subscription(1, true);
+	sleep(10);
+	ctrl_point_get_var_status(1, "Color", true);
 	sleep(10);
 	ctrl_point_unsubscribe(1, true);
 }
