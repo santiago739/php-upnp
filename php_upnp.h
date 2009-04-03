@@ -21,16 +21,16 @@
 #ifndef PHP_UPNP_H
 #define PHP_UPNP_H
 
+#include "upnp/upnp.h"
+#include "upnp/upnptools.h"
+#include "upnp/ithread.h"
+
 extern zend_module_entry upnp_module_entry;
 #define phpext_upnp_ptr &upnp_module_entry
 
 #ifdef ZTS
 #include "TSRM.h"
 #endif
-
-#include "upnp/ithread.h"
-
-extern ithread_mutex_t DeviceListMutex;
 
 ZEND_BEGIN_MODULE_GLOBALS(upnp)
 	char *ip;
@@ -40,6 +40,7 @@ ZEND_BEGIN_MODULE_GLOBALS(upnp)
 	UpnpDevice_Handle device_handle;
 	int error_code;
 	int initialized;
+	int callbacks_on;
 ZEND_END_MODULE_GLOBALS(upnp)
 
 #ifdef ZTS

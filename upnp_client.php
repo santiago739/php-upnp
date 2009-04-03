@@ -26,20 +26,34 @@ function ctrl_point_sig_int($signal)
 	exit();
 }
 
-function ctrl_point_callback_event_handler($args, $event_type, $event_data)
+function ctrl_point_callback_event_handler($event_type, $event_data, $args)
 {
 	echo "=========================================================\n";
 	echo "[CALL]: ctrl_point_callback_event_handler() \n";
 	echo "---------------------------------------------------------\n";
-
-	//echo "args: ";
-	//print_r($args);
-
-	printf("EventType: %s (%d)\n", upnp_get_event_type_name($event_type), $event_type);
 	
-	//echo "event_data: ";
-	//print_r($event_data);
+	printf("PHP EventType: %s (%d)\n", upnp_get_event_type_name($event_type), $event_type);
+	
+	/*echo "[EVENT_DATA]: ";
+	var_dump($event_data);
+	unset($event_type);
+	unset($event_data);
+	var_dump($event_type);
+	var_dump($event_data);*/
 
+	$time_out = -1;
+	for ($i=0; $i<=$time_out; $i++) {
+		echo ".";
+		sleep(1);	
+	}
+	echo "\n";
+	//return;
+
+	
+
+	//echo "[ARGS]: ";
+	//var_dump($args);
+	
 	switch ($event_type)
 	{
 		case 4:
@@ -62,6 +76,9 @@ function ctrl_point_subscribe($event_data)
 	global $services;
 
 	echo "\n[CALL]: ctrl_point_subscribe()\n";
+
+	//sleep(5);
+	//exit;
 
 	$location = $event_data['location'];
 	printf("EventLocation: %s\n", $location);
@@ -147,7 +164,7 @@ function ctrl_point_subscribe($event_data)
 	}
 }
 
-function ctrl_point_subscribe_callback_event_handler($args, $event_type, $event_data)
+function ctrl_point_subscribe_callback_event_handler($event_type, $event_data, $args)
 {
 	echo "=========================================================\n";
 	echo "[CALL]: ctrl_point_subscribe_callback_event_handler() \n";
@@ -155,7 +172,7 @@ function ctrl_point_subscribe_callback_event_handler($args, $event_type, $event_
 
 	global $services;
 
-	printf("EventType: %s (%d)\n", upnp_get_event_type_name($event_type), $event_type);
+	printf("PHP EventType: %s (%d)\n", upnp_get_event_type_name($event_type), $event_type);
 	
 	echo "event_data: ";
 	print_r($event_data);
@@ -181,7 +198,7 @@ function ctrl_point_subscribe_callback_event_handler($args, $event_type, $event_
 function ctrl_point_unsubscribe($ind, $async=false)
 {
 	echo "=========================================================\n";
-	echo "[CALL]: ctrl_point_unsubscribe() \n";
+	echo "[CALL]: ctrl_point_unsubscribe($ind, $async) \n";
 	echo "---------------------------------------------------------\n";
 
 	global $services;
@@ -216,9 +233,11 @@ function ctrl_point_unsubscribe($ind, $async=false)
 			show_error();
 		}
 	}
+
+	echo "=========================================================\n\n\n";
 }
 
-function ctrl_point_unsubscribe_callback_event_handler($args, $event_type, $event_data)
+function ctrl_point_unsubscribe_callback_event_handler($event_type, $event_data, $args)
 {
 	echo "=========================================================\n";
 	echo "[CALL]: ctrl_point_unsubscribe_callback_event_handler() \n";
@@ -226,7 +245,7 @@ function ctrl_point_unsubscribe_callback_event_handler($args, $event_type, $even
 
 	global $services;
 
-	printf("EventType: %s (%d)\n", upnp_get_event_type_name($event_type), $event_type);
+	printf("PHP EventType: %s (%d)\n", upnp_get_event_type_name($event_type), $event_type);
 	
 	echo "event_data: ";
 	print_r($event_data);
@@ -250,13 +269,12 @@ function ctrl_point_renew_subscription($ind, $async=false)
 	if ($async) {
 		echo "\n[CALL]: upnp_renew_subscription_async()\n";
 		$callback = 'ctrl_point_renew_subscribe_callback_event_handler';
-		$args = array('renewsubscribe_async', 'index' => $ind);
+		$args = array('renew_subscribe_async', 'index' => $ind);
 		$res = upnp_renew_subscription_async($services[$ind]['subs_id'], TIME_OUT, $callback, $args);
 		if ($res)
 		{
 			printf("Async renew subscription...\n");
 			$services[$i]['subscribed'] = 'in process';
-			var_dump($res);
 		}
 		else
 		{
@@ -277,9 +295,10 @@ function ctrl_point_renew_subscription($ind, $async=false)
 			show_error();
 		}
 	}
+	echo "=========================================================\n\n\n";
 }
 
-function ctrl_point_renew_subscribe_callback_event_handler($args, $event_type, $event_data)
+function ctrl_point_renew_subscribe_callback_event_handler($event_type, $event_data, $args)
 {
 	echo "=========================================================\n";
 	echo "[CALL]: ctrl_point_renew_subscribe_callback_event_handler() \n";
@@ -287,7 +306,7 @@ function ctrl_point_renew_subscribe_callback_event_handler($args, $event_type, $
 	
 	global $services;
 
-	printf("EventType: %s (%d)\n", upnp_get_event_type_name($event_type), $event_type);
+	printf("PHP EventType: %s (%d)\n", upnp_get_event_type_name($event_type), $event_type);
 	
 	echo "event_data: ";
 	print_r($event_data);
@@ -297,28 +316,6 @@ function ctrl_point_renew_subscribe_callback_event_handler($args, $event_type, $
 		printf("Renew subscription from EventURL with SID=%s\n\n", $services[$args['index']]['subs_id']);
 	}
 
-	echo "=========================================================\n\n\n";
-}
-
-function ctrl_point_event_recieved($event_data)
-{
-	echo "=========================================================\n";
-	echo "[CALL]: ctrl_point_event_recieved() \n";
-	echo "---------------------------------------------------------\n";
-
-	global $services;
-
-	echo "event_data: ";
-	print_r($event_data);
-
-	foreach ($services as $key=>$service)
-	{
-		if ($service['subs_id'] == $event_data['sid'])
-		{
-			$services[$key]['changed_variables'] = $event_data['changed_variables'];
-			break;
-		}
-	}
 	echo "=========================================================\n\n\n";
 }
 
@@ -363,7 +360,7 @@ function ctrl_point_get_var_status($ind, $param_name, $async=false)
 	echo "=========================================================\n\n\n";
 }
 
-function ctrl_point_get_service_var_status_callback_event_handler($args, $event_type, $event_data)
+function ctrl_point_get_service_var_status_callback_event_handler($event_type, $event_data, $args)
 {
 	echo "=========================================================\n";
 	echo "[CALL]: ctrl_point_get_service_var_status_callback_event_handler() \n";
@@ -371,7 +368,7 @@ function ctrl_point_get_service_var_status_callback_event_handler($args, $event_
 	
 	global $services;
 
-	printf("EventType: %s (%d)\n", upnp_get_event_type_name($event_type), $event_type);
+	printf("PHP EventType: %s (%d)\n", upnp_get_event_type_name($event_type), $event_type);
 	
 	echo "event_data: ";
 	print_r($event_data);
@@ -386,27 +383,85 @@ function ctrl_point_get_service_var_status_callback_event_handler($args, $event_
 	echo "=========================================================\n\n\n";
 }
 
-function ctrl_point_send_action($i, $action_name, $param_name, $param_val)
+function ctrl_point_send_action($ind, $action_name, $param_name, $param_val, $async=false)
 {
 	echo "=========================================================\n";
-	echo "[CALL]: ctrl_point_send_action() \n";
+	echo "[CALL]: ctrl_point_send_action($ind, $action_name, $param_name, $param_val, $async) \n";
 	echo "---------------------------------------------------------\n";
 
 	global $services;
 
-	$res = upnp_send_action($services[$i]['control_url'], $services[$i]['service_type'], $action_name, $param_name, $param_val);
-	
-	if ($res)
-	{
-		echo "[RESULT]: ";
-		var_dump($res);
-	}
-	else
-	{
-		show_error();
+	if ($async) {
+		echo "\n[CALL]: upnp_send_action_async()\n";
+		$callback = 'ctrl_point_send_action_callback_event_handler';
+		$args = array('send_action_async', 'index' => $ind);
+		$res = upnp_send_action_async($services[$ind]['control_url'], $services[$ind]['service_type'], 
+					$action_name, $param_name, $param_val, $callback, $args);
+		if ($res)
+		{
+			printf("Async send action...\n");
+		}
+		else
+		{
+			show_error();
+		}
+	} else {
+		echo "\n[CALL]: upnp_send_action()\n";
+
+		$res = upnp_send_action($services[$ind]['control_url'], $services[$ind]['service_type'], 
+					$action_name, $param_name, $param_val);
+		if ($res)
+		{
+			printf("Action %s with %s=%s was sended \n\n", $action_name, $param_name, $action_name);
+		}
+		else
+		{
+			show_error();
+		}
 	}
 
 	echo "=========================================================\n\n\n";
+}
+
+function ctrl_point_send_action_callback_event_handler($event_type, $event_data, $args)
+{
+	echo "=========================================================\n";
+	echo "[CALL]: ctrl_point_send_action_callback_event_handler() \n";
+	echo "---------------------------------------------------------\n";
+	
+	global $services;
+
+	printf("PHP EventType: %s (%d)\n", upnp_get_event_type_name($event_type), $event_type);
+	
+	echo "event_data: ";
+	print_r($event_data);
+/*
+	if ($event_data['err_code'] == 0)
+	{
+		$services[$args['index']]['subscribed'] = 'no';
+		printf("Renew subscription from EventURL with SID=%s\n\n", $services[$args['index']]['subs_id']);
+	}
+*/
+	echo "=========================================================\n\n\n";
+}
+
+function ctrl_point_event_recieved($event_data)
+{
+	echo "\n[CALL]: ctrl_point_event_recieved()\n";
+
+	global $services;
+
+	echo "event_data: ";
+	print_r($event_data);
+
+	foreach ($services as $key=>$service)
+	{
+		if ($service['subs_id'] == $event_data['sid'])
+		{
+			$services[$key]['changed_variables'] = $event_data['changed_variables'];
+			break;
+		}
+	}
 }
 
 function show_error()
@@ -433,7 +488,7 @@ echo "=========================================================\n\n\n";
 /* ########################################################### */
 
 /* ########################################################### */
-echo "=========================================================\n";
+/*echo "=========================================================\n";
 echo "[CALL]: upnp_search_async() \n";
 echo "---------------------------------------------------------\n";
 
@@ -447,24 +502,44 @@ if (!$res)
 {
 	show_error();
 }
-echo "=========================================================\n\n\n";
+echo "=========================================================\n\n\n";*/
 /* ########################################################### */
 
 //sleep(10);
 
 while(true) {
 	sleep(20);
-	ctrl_point_renew_subscription(0);
+	
+	//sleep(10);
+	//ctrl_point_renew_subscription(0);
+	//sleep(1);
+
+	upnp_stop_callbacks();
 	ctrl_point_send_action(0, "SetVolume", "Volume", 6);
-	ctrl_point_get_var_status(0, "Power");
-	sleep(5);
+	upnp_start_callbacks();
+
+	//ctrl_point_get_var_status(0, "Power");
+
+	sleep(20);
+	upnp_stop_callbacks();
 	ctrl_point_unsubscribe(0);
-	sleep(1);
-	ctrl_point_renew_subscription(1, true);
+	upnp_start_callbacks();
+
+	//sleep(1);
+	//ctrl_point_renew_subscription(1, true);
+	sleep(5);
+	upnp_stop_callbacks();
+	ctrl_point_send_action(1, "SetColor", "Color", 3, true);
+	upnp_start_callbacks();
+
+	//sleep(10);
+	//ctrl_point_get_var_status(1, "Color", true);
+
 	sleep(10);
-	ctrl_point_get_var_status(1, "Color", true);
-	sleep(10);
+	upnp_stop_callbacks();
 	ctrl_point_unsubscribe(1, true);
+	upnp_start_callbacks();
+	
 }
 
 
