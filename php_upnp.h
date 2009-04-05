@@ -43,6 +43,29 @@ ZEND_BEGIN_MODULE_GLOBALS(upnp)
 	int callbacks_on;
 ZEND_END_MODULE_GLOBALS(upnp)
 
+#define UPNP_COLLBACK_ON 	{ UPNP_G(callbacks_on) = 1; }
+#define UPNP_COLLBACK_OFF 	{ UPNP_G(callbacks_on) = 0; }
+
+#define UPNP_FUNCTION_LOCK(func) \
+	UPNP_COLLBACK_OFF; \	
+	if (php_upnp_try_lock(func)) { \
+		UPNP_COLLBACK_ON; \
+		return;	\
+	} \
+	
+	
+#define UPNP_FUNCTION_UNLOCK(func) \
+	if (php_upnp_try_unlock(func)) { \
+		UPNP_COLLBACK_ON; \
+		return;	\
+	} \
+	UPNP_COLLBACK_ON; \
+	
+#define UPNP_RETURN_STRING(s, duplicate, func) 	{ RETVAL_STRING(s, duplicate); UPNP_FUNCTION_UNLOCK(func); return; }
+#define UPNP_RETURN_FALSE(func)  			{ RETVAL_FALSE; UPNP_FUNCTION_UNLOCK(func); return; }
+#define UPNP_RETURN_TRUE(func)   			{ RETVAL_TRUE; UPNP_FUNCTION_UNLOCK(func); return; }
+#define UPNP_RETURN(func)   				{ UPNP_FUNCTION_UNLOCK(func); return; }
+
 #ifdef ZTS
 #define UPNP_G(v) TSRMG(upnp_globals_id, zend_upnp_globals *, v)
 #else

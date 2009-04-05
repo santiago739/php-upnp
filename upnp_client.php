@@ -211,12 +211,12 @@ function ctrl_point_unsubscribe($ind, $async=false)
 		if ($res)
 		{
 			printf("Async unsubscribing...\n");
-			$services[$i]['subscribed'] = 'in process';
+			$services[$ind]['subscribed'] = 'in process';
 			var_dump($res);
 		}
 		else
 		{
-			$services[$i]['subscribed'] = 'no';
+			$services[$ind]['subscribed'] = 'no';
 			show_error();
 		}
 	} else {
@@ -227,6 +227,7 @@ function ctrl_point_unsubscribe($ind, $async=false)
 		{
 			printf("Unsubscribed from EventURL with SID=%s\n\n", $services[$ind]['subs_id']);
 			$services[$ind]['subscribed'] = 'no';
+			ctrl_point_search_async();
 		}
 		else
 		{
@@ -261,7 +262,7 @@ function ctrl_point_unsubscribe_callback_event_handler($event_type, $event_data,
 function ctrl_point_renew_subscription($ind, $async=false)
 {
 	echo "=========================================================\n";
-	echo "[CALL]: ctrl_point_renew_subscription() \n";
+	echo "[CALL]: ctrl_point_renew_subscription($ind, $async) \n";
 	echo "---------------------------------------------------------\n";
 
 	global $services;
@@ -274,11 +275,11 @@ function ctrl_point_renew_subscription($ind, $async=false)
 		if ($res)
 		{
 			printf("Async renew subscription...\n");
-			$services[$i]['subscribed'] = 'in process';
+			$services[$ind]['subscribed'] = 'in process';
 		}
 		else
 		{
-			$services[$i]['subscribed'] = 'no';
+			$services[$ind]['subscribed'] = 'no';
 			show_error();
 		}
 	} else {
@@ -322,7 +323,7 @@ function ctrl_point_renew_subscribe_callback_event_handler($event_type, $event_d
 function ctrl_point_get_var_status($ind, $param_name, $async=false)
 {
 	echo "=========================================================\n";
-	echo "[CALL]: ctrl_point_get_var_status() \n";
+	echo "[CALL]: ctrl_point_get_var_status($ind, $param_name, $async) \n";
 	echo "---------------------------------------------------------\n";
 
 	global $services;
@@ -412,6 +413,8 @@ function ctrl_point_send_action($ind, $action_name, $param_name, $param_val, $as
 					$action_name, $param_name, $param_val);
 		if ($res)
 		{
+			echo "result: ";
+			print_r($res);
 			printf("Action %s with %s=%s was sended \n\n", $action_name, $param_name, $action_name);
 		}
 		else
@@ -464,6 +467,29 @@ function ctrl_point_event_recieved($event_data)
 	}
 }
 
+function ctrl_point_search_async()
+{
+	echo "=========================================================\n";
+	echo "[CALL]: ctrl_point_search_async() \n";
+	echo "---------------------------------------------------------\n";
+
+	echo "\n[CALL]: upnp_search_async()\n";
+	$callback = 'ctrl_point_callback_event_handler';
+	$args = array('search_async');
+	$res = upnp_search_async(TIME_OUT, TV_DEVICE_TYPE, $callback, $args);
+	if ($res)
+	{
+		printf("Async search...\n");
+	}
+	else
+	{
+		show_error();
+	}
+	
+
+	echo "=========================================================\n\n\n";
+}
+
 function show_error()
 {
 	echo "\n[ERROR] " . upnp_error() . "\n";
@@ -511,34 +537,27 @@ while(true) {
 	sleep(20);
 	
 	//sleep(10);
-	//ctrl_point_renew_subscription(0);
+	ctrl_point_renew_subscription(0);
 	//sleep(1);
 
-	upnp_stop_callbacks();
 	ctrl_point_send_action(0, "SetVolume", "Volume", 6);
-	upnp_start_callbacks();
 
-	//ctrl_point_get_var_status(0, "Power");
+	ctrl_point_get_var_status(0, "SetVolume");
 
 	sleep(20);
-	upnp_stop_callbacks();
 	ctrl_point_unsubscribe(0);
-	upnp_start_callbacks();
 
-	//sleep(1);
-	//ctrl_point_renew_subscription(1, true);
+	ctrl_point_renew_subscription(1, true);
+
 	sleep(5);
-	upnp_stop_callbacks();
 	ctrl_point_send_action(1, "SetColor", "Color", 3, true);
-	upnp_start_callbacks();
-
-	//sleep(10);
-	//ctrl_point_get_var_status(1, "Color", true);
 
 	sleep(10);
-	upnp_stop_callbacks();
+	ctrl_point_get_var_status(1, "Color", true);
+
+	sleep(10);
+
 	ctrl_point_unsubscribe(1, true);
-	upnp_start_callbacks();
 	
 }
 
